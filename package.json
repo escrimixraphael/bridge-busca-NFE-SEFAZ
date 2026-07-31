@@ -1,13 +1,13 @@
 {
   "name": "bridge-sefaz",
   "version": "2.0.0",
-  "description": "Bridge de comunicação com a SEFAZ",
+  "description": "Bridge de comunicação entre GoSkip, PocketBase e SEFAZ",
   "type": "module",
   "private": true,
-  "main": "server.js",
+  "main": "src/server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
   },
   "engines": {
     "node": ">=20"
