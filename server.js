@@ -2,220 +2,735 @@ import 'dotenv/config';
 
 import express from 'express';
 import https from 'node:https';
+import crypto from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import { constants } from 'node:crypto';
+
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
+
 
 const app = express();
 
+
 const PORT = Number(process.env.PORT || 3000);
+
 const AUTH_KEY = process.env.AUTH_KEY;
 
-if (!AUTH_KEY) {
-  console.warn(
-    '[Bridge] ATENÇÃO: a variável AUTH_KEY não foi configurada.'
-  );
-}
+
+
+// ================================
+// CONFIGURAÇÃO
+// ================================
 
 app.disable('x-powered-by');
 
-app.use(helmet());
-app.use(cors());
-app.use(compression());
-app.use(express.json({ limit: '10mb' }));
-app.use(morgan('combined'));
 
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'ok',
-    message: 'Bridge SEFAZ operacional',
-    timestamp: new Date().toISOString()
-  });
+app.use(
+helmet()
+);
+
+
+app.use(
+cors({
+origin:"*"
+})
+);
+
+
+app.use(
+compression()
+);
+
+
+app.use(
+express.json({
+limit:"20mb"
+})
+);
+
+
+app.use(
+morgan("combined")
+);
+
+
+
+// ================================
+// RATE LIMIT
+// ================================
+
+const limiter = rateLimit({
+
+windowMs:60 * 1000,
+
+max:120,
+
+message:{
+success:false,
+error:"Muitas requisições"
+}
+
 });
 
-app.post('/consultar-sefaz-direto', async (req, res) => {
-  let respostaEnviada = false;
 
-  try {
-    const chaveRecebida = req.headers['x-api-key'];
+app.use(
+"/api",
+limiter
+);
 
-    if (!AUTH_KEY || chaveRecebida !== AUTH_KEY) {
-      console.warn('[Bridge] Tentativa de acesso com chave inválida');
 
-      return res.status(403).json({
-        success: false,
-        error: 'Acesso negado: chave de API inválida'
-      });
-    }
 
-    const {
-      pfxBase64,
-      password,
-      endpoint,
-      soapAction,
-      soapEnvelope
-    } = req.body;
+// ================================
+// HEALTH CHECK
+// ================================
 
-    if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
-      return res.status(400).json({
-        success: false,
-        error:
-          'Dados incompletos: pfxBase64, password, endpoint e soapEnvelope são obrigatórios'
-      });
-    }
+app.get(
+"/health",
 
-    let url;
+(req,res)=>{
 
-    try {
-      url = new URL(endpoint);
-    } catch {
-      return res.status(400).json({
-        success: false,
-        error: 'Endpoint inválido'
-      });
-    }
 
-    if (url.protocol !== 'https:') {
-      return res.status(400).json({
-        success: false,
-        error: 'O endpoint deve utilizar HTTPS'
-      });
-    }
+res.json({
 
-    const pfxBuffer = Buffer.from(pfxBase64, 'base64');
+status:"online",
 
-    if (!pfxBuffer.length) {
-      return res.status(400).json({
-        success: false,
-        error: 'Certificado PFX inválido ou vazio'
-      });
-    }
+service:"Bridge SEFAZ",
 
-    const requestOptions = {
-      hostname: url.hostname,
-      port: url.port || 443,
-      path: `${url.pathname}${url.search}`,
-      method: 'POST',
-      pfx: pfxBuffer,
-      passphrase: password,
-      rejectUnauthorized: false,
-      secureOptions:
-        constants.SSL_OP_NO_TLSv1 | constants.SSL_OP_NO_TLSv1_1,
-      ciphers: 'DEFAULT:!DH',
-      headers: {
-        'Content-Type': 'application/soap+xml; charset=utf-8',
-        SOAPAction: soapAction || '',
-        Accept: 'application/soap+xml, text/xml, */*',
-        'Content-Length': Buffer.byteLength(soapEnvelope, 'utf8')
-      }
-    };
+node:
+process.version,
 
-    console.log(`[Bridge] Iniciando requisição para: ${url.hostname}`);
+timestamp:
+new Date()
 
-    const sefazRequest = https.request(
-      requestOptions,
-      (sefazResponse) => {
-        let responseBody = '';
-
-        console.log(
-          `[Bridge] Status recebido da SEFAZ: ${sefazResponse.statusCode}`
-        );
-
-        sefazResponse.setEncoding('utf8');
-
-        sefazResponse.on('data', (chunk) => {
-          responseBody += chunk;
-        });
-
-        sefazResponse.on('end', () => {
-          if (res.headersSent) {
-            return;
-          }
-
-          respostaEnviada = true;
-
-          console.log(
-            `[Bridge] Resposta concluída. Tamanho: ${Buffer.byteLength(
-              responseBody,
-              'utf8'
-            )} bytes`
-          );
-
-          res.status(sefazResponse.statusCode || 502).json({
-            success: sefazResponse.statusCode === 200,
-            xmlResponse: responseBody,
-            statusCode: sefazResponse.statusCode
-          });
-        });
-      }
-    );
-
-    sefazRequest.setTimeout(30000, () => {
-      console.error('[Bridge] Timeout na comunicação com a SEFAZ');
-      sefazRequest.destroy(new Error('Timeout na comunicação com a SEFAZ'));
-
-      if (!res.headersSent) {
-        respostaEnviada = true;
-
-        res.status(504).json({
-          success: false,
-          error: 'Timeout na comunicação com a SEFAZ'
-        });
-      }
-    });
-
-    sefazRequest.on('error', (error) => {
-      console.error('[Bridge] Erro na conexão HTTPS:', error.message);
-
-      if (!res.headersSent && !respostaEnviada) {
-        respostaEnviada = true;
-
-        res.status(502).json({
-          success: false,
-          error: `Erro na conexão com a SEFAZ: ${error.message}`
-        });
-      }
-    });
-
-    sefazRequest.write(soapEnvelope, 'utf8');
-    sefazRequest.end();
-  } catch (error) {
-    console.error('[Bridge] Erro inesperado:', error);
-
-    if (!res.headersSent) {
-      res.status(500).json({
-        success: false,
-        error: `Erro interno no bridge: ${error.message}`
-      });
-    }
-  }
 });
 
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Rota não encontrada'
-  });
+
+}
+
+);
+
+
+
+// ================================
+// VALIDAÇÃO API KEY
+// ================================
+
+
+function validarAPI(req,res,next){
+
+
+const key =
+req.headers["x-api-key"];
+
+
+
+if(
+!AUTH_KEY ||
+key !== AUTH_KEY
+){
+
+
+return res.status(403)
+.json({
+
+success:false,
+
+error:
+"API Key inválida"
+
 });
 
-app.use((error, req, res, next) => {
-  console.error('[Bridge] Erro global:', error);
 
-  if (res.headersSent) {
-    return next(error);
-  }
+}
 
-  res.status(500).json({
-    success: false,
-    error: 'Erro interno do servidor'
-  });
+
+
+next();
+
+
+}
+
+
+
+// ================================
+// CONSULTA SEFAZ MTLS
+// ================================
+
+
+app.post(
+
+"/api/sefaz/consultar",
+
+validarAPI,
+
+
+async(req,res)=>{
+
+
+let finalizado=false;
+
+
+
+try{
+
+
+const {
+
+pfxBase64,
+
+password,
+
+endpoint,
+
+soapAction,
+
+soapEnvelope,
+
+empresaId
+
+}=req.body;
+
+
+
+
+if(
+
+!pfxBase64 ||
+
+!password ||
+
+!endpoint ||
+
+!soapEnvelope
+
+){
+
+
+return res.status(400)
+.json({
+
+success:false,
+
+error:
+
+"Campos obrigatórios ausentes"
+
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Bridge] Servidor rodando na porta ${PORT}`);
-  console.log('[Bridge] Endpoint de saúde: /health');
-  console.log('[Bridge] Bridge SEFAZ pronta');
+
+}
+
+
+
+
+const url =
+new URL(endpoint);
+
+
+
+if(
+url.protocol !== "https:"
+){
+
+
+return res.status(400)
+.json({
+
+success:false,
+
+error:
+"Somente HTTPS permitido"
+
 });
+
+
+}
+
+
+
+
+
+const certificado =
+
+Buffer.from(
+
+pfxBase64,
+
+"base64"
+
+);
+
+
+
+if(
+!certificado.length
+){
+
+
+return res.status(400)
+.json({
+
+success:false,
+
+error:
+"Certificado inválido"
+
+});
+
+
+}
+
+
+
+
+
+console.log(
+`
+================================
+
+CONSULTA SEFAZ
+
+Empresa:
+${empresaId || "N/A"}
+
+Servidor:
+${url.hostname}
+
+Data:
+${new Date()}
+
+================================
+`
+);
+
+
+
+
+
+const options={
+
+
+hostname:url.hostname,
+
+
+port:url.port || 443,
+
+
+path:
+
+url.pathname + url.search,
+
+
+method:"POST",
+
+
+
+pfx:certificado,
+
+
+passphrase:password,
+
+
+
+// mTLS
+
+rejectUnauthorized:false,
+
+
+secureOptions:
+
+crypto.constants.SSL_OP_NO_TLSv1 |
+
+crypto.constants.SSL_OP_NO_TLSv1_1,
+
+
+
+headers:{
+
+
+"Content-Type":
+
+'application/soap+xml; charset=utf-8',
+
+
+
+SOAPAction:
+
+soapAction || "",
+
+
+
+Accept:
+
+"text/xml",
+
+
+
+"Content-Length":
+
+Buffer.byteLength(
+
+soapEnvelope
+
+)
+
+}
+
+
+};
+
+
+
+
+
+
+const sefazRequest =
+
+https.request(
+
+options,
+
+
+(sefazResponse)=>{
+
+
+let body="";
+
+
+
+sefazResponse.setEncoding(
+"utf8"
+);
+
+
+
+console.log(
+
+`SEFAZ STATUS ${sefazResponse.statusCode}`
+
+);
+
+
+
+
+
+sefazResponse.on(
+
+"data",
+
+(chunk)=>{
+
+body+=chunk;
+
+}
+
+);
+
+
+
+
+sefazResponse.on(
+
+"end",
+
+()=>{
+
+
+if(finalizado)
+return;
+
+
+finalizado=true;
+
+
+
+res.status(
+
+sefazResponse.statusCode || 502
+
+)
+
+.json({
+
+success:
+
+sefazResponse.statusCode===200,
+
+
+statusCode:
+
+sefazResponse.statusCode,
+
+
+xmlResponse:
+
+body,
+
+
+empresaId
+
+});
+
+
+});
+
+
+}
+
+);
+
+
+
+
+
+sefazRequest.setTimeout(
+
+60000,
+
+()=>{
+
+
+console.error(
+"Timeout SEFAZ"
+);
+
+
+sefazRequest.destroy();
+
+
+
+if(!finalizado){
+
+
+finalizado=true;
+
+
+res.status(504)
+.json({
+
+success:false,
+
+error:
+"Timeout SEFAZ"
+
+});
+
+
+}
+
+
+}
+
+);
+
+
+
+
+
+sefazRequest.on(
+
+"error",
+
+(error)=>{
+
+
+console.error(
+
+"Erro HTTPS:",
+
+error.message
+
+);
+
+
+
+if(!finalizado){
+
+
+finalizado=true;
+
+
+res.status(502)
+.json({
+
+success:false,
+
+error:error.message
+
+});
+
+
+}
+
+
+}
+
+);
+
+
+
+
+
+
+sefazRequest.write(
+
+soapEnvelope,
+
+"utf8"
+
+);
+
+
+sefazRequest.end();
+
+
+
+
+
+}
+
+catch(error){
+
+
+
+console.error(
+
+"Erro Bridge",
+
+error
+
+);
+
+
+
+if(!res.headersSent){
+
+
+res.status(500)
+.json({
+
+success:false,
+
+error:
+
+error.message
+
+});
+
+
+}
+
+
+
+}
+
+
+
+}
+
+);
+
+
+
+// ================================
+// 404
+// ================================
+
+
+app.use(
+
+(req,res)=>{
+
+
+res.status(404)
+.json({
+
+success:false,
+
+error:
+"Endpoint inexistente"
+
+});
+
+
+}
+
+);
+
+
+
+// ================================
+// ERRO GLOBAL
+// ================================
+
+
+app.use(
+
+(error,req,res,next)=>{
+
+
+console.error(
+error
+);
+
+
+
+res.status(500)
+.json({
+
+success:false,
+
+error:
+"Erro interno"
+
+});
+
+
+}
+
+);
+
+
+
+// ================================
+// START
+// ================================
+
+
+app.listen(
+
+PORT,
+
+"0.0.0.0",
+
+()=>{
+
+
+console.log(
+`
+====================================
+
+BRIDGE SEFAZ ONLINE
+
+Porta:
+${PORT}
+
+Health:
+/health
+
+
+Consulta:
+/api/sefaz/consultar
+
+
+====================================
+`
+);
+
+
+}
+
+);
