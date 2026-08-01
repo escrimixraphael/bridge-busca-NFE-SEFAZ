@@ -39,17 +39,20 @@ app.use(morgan("combined"));
 // RATE LIMIT
 // ================================
 const limiter = rateLimit({
-    windowMs: 60 * 1000,
-    max: 120,
+    windowMs: 60 * 1000, // 1 minuto
+    max: 120, // 120 requests
     message: {
         success: false,
         error: "Muitas requisições"
     }
 });
+
 app.use("/api", limiter);
+app.use("/backend", limiter);
+app.use("/rpa", limiter);
 
 // ================================
-// HEALTH CHECK
+// ENDPOINTS DE MONITORAMENTO
 // ================================
 app.get("/health", (req, res) => {
     res.json({
@@ -60,15 +63,25 @@ app.get("/health", (req, res) => {
     });
 });
 
-// ================================
-// TESTE DE AUTENTICAÇÃO
-// ================================
-app.get("/api/test-auth", validarAPI, (req, res) => {
+app.get("/api/info", (req, res) => {
     res.json({
         success: true,
-        message: "Autenticação OK",
+        service: "Bridge SEFAZ",
+        version: "1.0.0",
         node: process.version,
+        uptime: process.uptime(),
+        authKeyConfigured: !!AUTH_KEY,
+        xmlKeyConfigured: !!XML_KEY,
         timestamp: new Date().toISOString()
+    });
+});
+
+app.get("/version", (req, res) => {
+    res.json({
+        service: "Bridge SEFAZ",
+        version: "1.0.0",
+        node: process.version,
+        uptime: process.uptime()
     });
 });
 
@@ -79,84 +92,61 @@ function validarAPI(req, res, next) {
     const apiKey = req.headers["x-api-key"];
     const xmlKey = req.headers["x-xml-key"];
 
-    console.log("========== NOVA REQUISIÇÃO ==========");
-    console.log("IP:", req.ip);
-    console.log("Método:", req.method);
-    console.log("URL:", req.originalUrl);
-    console.log("API KEY recebida:", !!apiKey);
-    console.log("XML KEY recebida:", !!xmlKey);
-    console.log("AUTH_KEY configurada:", !!AUTH_KEY);
-    console.log("XML_KEY configurada:", !!XML_KEY);
-
     if (!AUTH_KEY) {
-        console.error("AUTH_KEY não configurada.");
-        return res.status(500).json({
-            success: false,
-            error: "AUTH_KEY não configurada no servidor"
-        });
+        console.error("AUTH_KEY não configurada no servidor.");
+        return res.status(500).json({ success: false, error: "AUTH_KEY não configurada no servidor" });
     }
-
     if (apiKey !== AUTH_KEY) {
-        console.error("API KEY inválida.");
-        return res.status(403).json({
-            success: false,
-            error: "API Key inválida"
-        });
+        return res.status(403).json({ success: false, error: "API Key inválida" });
     }
-
     if (XML_KEY && xmlKey !== XML_KEY) {
-        console.error("XML KEY inválida.");
-        return res.status(403).json({
-            success: false,
-            error: "XML Key inválida"
-        });
+        return res.status(403).json({ success: false, error: "XML Key inválida" });
     }
 
-    console.log("Autenticação OK");
-    console.log("====================================");
     next();
 }
 
 // ================================
-// TESTE DE CERTIFICADO
+// TESTE DE AUTENTICAÇÃO E CERTIFICADO
 // ================================
+app.get("/api/test-auth", validarAPI, (req, res) => {
+    res.json({
+        success: true,
+        message: "Autenticação OK",
+        node: process.version,
+        timestamp: new Date().toISOString()
+    });
+});
+
 app.post("/api/sefaz/test-cert", validarAPI, async (req, res) => {
     try {
         const { pfxBase64, password } = req.body;
 
         if (!pfxBase64 || !password) {
-            return res.status(400).json({
-                success: false,
-                error: "PFX ou senha não informados."
-            });
+            return res.status(400).json({ success: false, error: "PFX ou senha não informados." });
         }
 
         const certificado = Buffer.from(pfxBase64, "base64");
         
-        // Testa a criação do contexto seguro para validar o certificado e a senha
-        const contexto = crypto.createSecureContext({
+        crypto.createSecureContext({
             pfx: certificado,
             passphrase: password
         });
 
-        return res.json({
-            success: true,
-            message: "Certificado carregado com sucesso."
-        });
-
+        return res.json({ success: true, message: "Certificado carregado e senha validada com sucesso." });
     } catch (error) {
-        return res.status(400).json({
-            success: false,
-            error: error.message
-        });
+        return res.status(400).json({ success: false, error: "Certificado ou senha inválidos: " + error.message });
     }
 });
 
 // ================================
-// CONSULTA SEFAZ MTLS
+// HANDLER: CONSULTA SEFAZ MTLS
 // ================================
-app.post("/api/sefaz/consultar", validarAPI, async (req, res) => {
+const consultarSefaz = async (req, res) => {
     let finalizado = false;
+    const requestId = crypto.randomUUID();
+
+    console.log(`\n[${requestId}] ========== NOVA CONSULTA INICIADA ==========`);
 
     try {
         const {
@@ -169,38 +159,50 @@ app.post("/api/sefaz/consultar", validarAPI, async (req, res) => {
         } = req.body;
 
         if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
-            return res.status(400).json({
-                success: false,
-                error: "Campos obrigatórios ausentes"
-            });
+            return res.status(400).json({ success: false, requestId, error: "Campos obrigatórios ausentes" });
         }
 
         const url = new URL(endpoint);
 
         if (url.protocol !== "https:") {
-            return res.status(400).json({
-                success: false,
-                error: "Somente HTTPS permitido"
-            });
+            return res.status(400).json({ success: false, requestId, error: "Somente HTTPS permitido" });
         }
 
-        const certificado = Buffer.from(pfxBase64, "base64");
+        // Validação de segurança expandida do host
+        const host = url.hostname.toLowerCase();
+        const dominiosPermitidos = ["sefaz", "nfe", "fazenda", "svrs", "svc", "gov.br"];
+        const permitido = dominiosPermitidos.some(d => host.includes(d));
+        
+        if (!permitido) {
+            console.warn(`[${requestId}] Tentativa de acesso a host não permitido: ${host}`);
+            return res.status(400).json({ success: false, requestId, error: "Endpoint não permitido." });
+        }
+
+        // 1. Valida se o Base64 é convertível
+        let certificado;
+        try {
+            certificado = Buffer.from(pfxBase64, "base64");
+        } catch {
+            return res.status(400).json({ success: false, requestId, error: "Base64 do certificado inválido." });
+        }
 
         if (!certificado.length) {
-            return res.status(400).json({
-                success: false,
-                error: "Certificado inválido"
-            });
+            return res.status(400).json({ success: false, requestId, error: "Certificado vazio" });
         }
 
-        console.log(`
-================================
-CONSULTA SEFAZ
-Empresa: ${empresaId || "N/A"}
-Servidor: ${url.hostname}
-Data: ${new Date()}
-================================
-        `);
+        // 2. Valida o PFX e a senha ANTES da requisição HTTPS
+        try {
+            crypto.createSecureContext({
+                pfx: certificado,
+                passphrase: password
+            });
+        } catch (err) {
+            console.error(`[${requestId}] Falha ao abrir PFX: Senha incorreta ou arquivo corrompido.`);
+            return res.status(400).json({ success: false, requestId, error: "Certificado PFX inválido ou senha incorreta." });
+        }
+
+        console.log(`[${requestId}] Empresa: ${empresaId || "N/A"}`);
+        console.log(`[${requestId}] Servidor: ${url.hostname}`);
 
         const options = {
             hostname: url.hostname,
@@ -209,13 +211,14 @@ Data: ${new Date()}
             method: "POST",
             pfx: certificado,
             passphrase: password,
-            // mTLS
-            rejectUnauthorized: false,
+            minVersion: "TLSv1.2",
+            rejectUnauthorized: true, // Em produção, validar o certificado de destino
             secureOptions: crypto.constants.SSL_OP_NO_TLSv1 | crypto.constants.SSL_OP_NO_TLSv1_1,
             headers: {
                 "Content-Type": 'application/soap+xml; charset=utf-8',
                 SOAPAction: soapAction || "",
-                Accept: "text/xml",
+                Accept: "application/soap+xml,text/xml,*/*",
+                "User-Agent": "Bridge-SEFAZ/1.0",
                 "Content-Length": Buffer.byteLength(soapEnvelope)
             }
         };
@@ -224,7 +227,8 @@ Data: ${new Date()}
             let body = "";
             sefazResponse.setEncoding("utf8");
 
-            console.log(`SEFAZ STATUS ${sefazResponse.statusCode}`);
+            console.log(`[${requestId}] SEFAZ STATUS: ${sefazResponse.statusCode}`);
+            console.log(`[${requestId}] SEFAZ HEADERS:`, JSON.stringify(sefazResponse.headers));
 
             sefazResponse.on("data", (chunk) => {
                 body += chunk;
@@ -237,86 +241,82 @@ Data: ${new Date()}
                 res.status(sefazResponse.statusCode || 502).json({
                     success: sefazResponse.statusCode === 200,
                     statusCode: sefazResponse.statusCode,
-                    xmlResponse: body,
-                    empresaId
+                    requestId,
+                    empresaId,
+                    xmlSize: Buffer.byteLength(body, 'utf8'),
+                    xmlResponse: body
                 });
+                
+                console.log(`[${requestId}] Consulta finalizada com sucesso.`);
             });
         });
 
         sefazRequest.setTimeout(60000, () => {
-            console.error("Timeout SEFAZ");
+            console.error(`[${requestId}] Timeout SEFAZ`);
             sefazRequest.destroy();
 
             if (!finalizado) {
                 finalizado = true;
-                res.status(504).json({
-                    success: false,
-                    error: "Timeout SEFAZ"
-                });
+                res.status(504).json({ success: false, requestId, error: "Timeout de 60s ao comunicar com a SEFAZ" });
             }
         });
 
         sefazRequest.on("error", (error) => {
-            console.error("Erro HTTPS:", error.message);
+            console.error(`[${requestId}] Erro HTTPS:`, error.message);
 
             if (!finalizado) {
                 finalizado = true;
-                res.status(502).json({
-                    success: false,
-                    error: error.message
-                });
+                res.status(502).json({ success: false, requestId, error: error.message });
             }
+        });
+
+        sefazRequest.on("close", () => {
+            console.log(`[${requestId}] Conexão HTTPS com a SEFAZ encerrada.`);
         });
 
         sefazRequest.write(soapEnvelope, "utf8");
         sefazRequest.end();
 
     } catch (error) {
-        console.error("Erro Bridge", error);
+        console.error(`[${requestId}] Erro não tratado na Bridge:`, error);
 
         if (!res.headersSent) {
-            res.status(500).json({
-                success: false,
-                error: error.message
-            });
+            res.status(500).json({ success: false, requestId, error: error.message });
         }
     }
-});
+};
+
+// ================================
+// REGISTRO DE ROTAS DE CONSULTA E ALIASES
+// ================================
+app.post("/api/sefaz/consultar", validarAPI, consultarSefaz);
+app.post("/backend/v1/xml/sync", validarAPI, consultarSefaz);
+app.post("/rpa/xml/sync", validarAPI, consultarSefaz);
 
 // ================================
 // 404 - ENDPOINT INEXISTENTE
 // ================================
 app.use((req, res) => {
-    res.status(404).json({
-        success: false,
-        error: "Endpoint inexistente"
-    });
+    res.status(404).json({ success: false, error: "Endpoint inexistente" });
 });
 
 // ================================
 // ERRO GLOBAL
 // ================================
 app.use((error, req, res, next) => {
-    console.error(error);
-    res.status(500).json({
-        success: false,
-        error: "Erro interno"
-    });
+    console.error("Erro Global:", error);
+    res.status(500).json({ success: false, error: "Erro interno do servidor" });
 });
 
 // ================================
 // START
 // ================================
 app.listen(PORT, "0.0.0.0", () => {
-    console.log(`
-====================================
-BRIDGE SEFAZ ONLINE
-Porta: ${PORT}
-
-Health: /health
-Teste Auth: /api/test-auth
-Teste Cert: /api/sefaz/test-cert
-Consulta: /api/sefaz/consultar
-====================================
-    `);
+    console.log("====================================");
+    console.log("BRIDGE SEFAZ ONLINE");
+    console.log("Node:", process.version);
+    console.log("Porta:", PORT);
+    console.log("AUTH_KEY:", AUTH_KEY ? "OK" : "NÃO CONFIGURADA");
+    console.log("XML_KEY:", XML_KEY ? "OK" : "NÃO CONFIGURADA");
+    console.log("====================================");
 });
