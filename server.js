@@ -52,6 +52,15 @@ app.use("/backend", limiter);
 app.use("/rpa", limiter);
 
 // ================================
+// UTILS
+// ================================
+function sanitizarBase64(b64) {
+    if (typeof b64 !== 'string') return '';
+    // Remove prefixo Data URI se presente e limpa espaços/quebras de linha
+    return b64.replace(/^data:.*;base64,/, '').replace(/\s+/g, '');
+}
+
+// ================================
 // ENDPOINTS DE MONITORAMENTO
 // ================================
 app.get("/health", (req, res) => {
@@ -126,7 +135,8 @@ app.post("/api/sefaz/test-cert", validarAPI, async (req, res) => {
             return res.status(400).json({ success: false, error: "PFX ou senha não informados." });
         }
 
-        const certificado = Buffer.from(pfxBase64, "base64");
+        const b64Limpo = sanitizarBase64(pfxBase64);
+        const certificado = Buffer.from(b64Limpo, "base64");
         
         crypto.createSecureContext({
             pfx: certificado,
@@ -142,13 +152,14 @@ app.post("/api/sefaz/test-cert", validarAPI, async (req, res) => {
 // ================================
 // HANDLER GENÉRICO: CONSULTA SEFAZ MTLS
 // ================================
-const consultarSefaz = async (req, res) => {
+const consultarSefaz = async (req, res, dadosCustom = null) => {
     let finalizado = false;
     const requestId = crypto.randomUUID();
 
     console.log(`\n[${requestId}] ========== NOVA CONSULTA INICIADA ==========`);
 
     try {
+        const payload = dadosCustom || req.body;
         const {
             pfxBase64,
             password,
@@ -156,7 +167,7 @@ const consultarSefaz = async (req, res) => {
             soapAction,
             soapEnvelope,
             empresaId
-        } = req.body;
+        } = payload;
 
         if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
             return res.status(400).json({ success: false, requestId, error: "Campos obrigatórios ausentes" });
@@ -179,7 +190,8 @@ const consultarSefaz = async (req, res) => {
 
         let certificado;
         try {
-            certificado = Buffer.from(pfxBase64, "base64");
+            const b64Limpo = sanitizarBase64(pfxBase64);
+            certificado = Buffer.from(b64Limpo, "base64");
         } catch {
             return res.status(400).json({ success: false, requestId, error: "Base64 do certificado inválido." });
         }
@@ -295,16 +307,10 @@ app.post("/api/sefaz/distribuicao", validarAPI, async (req, res) => {
         });
     }
 
-    // Limpa o CNPJ mantendo apenas números
     const cnpjLimpo = String(cnpj).replace(/\D/g, '');
-    
-    // A Sefaz exige o NSU com exatamente 15 dígitos preenchidos com zeros à esquerda
     const nsuFormatado = String(ultimoNsu).padStart(15, '0');
-    
-    // O código da UF do autor. Se não for passado na requisição, usa "91" (Ambiente Nacional)
     const cUF = ufIbge || "91";
 
-    // Constrói o Envelope SOAP para a distribuição de DFe (versão 1.01)
     const soapEnvelope = `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
   <soap12:Body>
@@ -323,8 +329,7 @@ app.post("/api/sefaz/distribuicao", validarAPI, async (req, res) => {
   </soap12:Body>
 </soap12:Envelope>`;
 
-    // Transforma o req.body com os dados que a função `consultarSefaz` original espera
-    req.body = {
+    const payloadSefaz = {
         pfxBase64,
         password,
         empresaId,
@@ -333,17 +338,15 @@ app.post("/api/sefaz/distribuicao", validarAPI, async (req, res) => {
         soapEnvelope
     };
 
-    // Redireciona para o handler que processa a comunicação Sefaz mTLS
-    return consultarSefaz(req, res);
+    return consultarSefaz(req, res, payloadSefaz);
 });
-
 
 // ================================
 // REGISTRO DE ROTAS DE CONSULTA GENÉRICA
 // ================================
-app.post("/api/sefaz/consultar", validarAPI, consultarSefaz);
-app.post("/backend/v1/xml/sync", validarAPI, consultarSefaz);
-app.post("/rpa/xml/sync", validarAPI, consultarSefaz);
+app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
+app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
+app.post("/rpa/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
 // ================================
 // 404 - ENDPOINT INEXISTENTE
