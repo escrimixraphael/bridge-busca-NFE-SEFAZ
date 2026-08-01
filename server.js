@@ -140,7 +140,7 @@ app.post("/api/sefaz/test-cert", validarAPI, async (req, res) => {
 });
 
 // ================================
-// HANDLER: CONSULTA SEFAZ MTLS
+// HANDLER GENÉRICO: CONSULTA SEFAZ MTLS
 // ================================
 const consultarSefaz = async (req, res) => {
     let finalizado = false;
@@ -168,7 +168,6 @@ const consultarSefaz = async (req, res) => {
             return res.status(400).json({ success: false, requestId, error: "Somente HTTPS permitido" });
         }
 
-        // Validação de segurança expandida do host
         const host = url.hostname.toLowerCase();
         const dominiosPermitidos = ["sefaz", "nfe", "fazenda", "svrs", "svc", "gov.br"];
         const permitido = dominiosPermitidos.some(d => host.includes(d));
@@ -178,7 +177,6 @@ const consultarSefaz = async (req, res) => {
             return res.status(400).json({ success: false, requestId, error: "Endpoint não permitido." });
         }
 
-        // 1. Valida se o Base64 é convertível
         let certificado;
         try {
             certificado = Buffer.from(pfxBase64, "base64");
@@ -190,7 +188,6 @@ const consultarSefaz = async (req, res) => {
             return res.status(400).json({ success: false, requestId, error: "Certificado vazio" });
         }
 
-        // 2. Valida o PFX e a senha ANTES da requisição HTTPS
         try {
             crypto.createSecureContext({
                 pfx: certificado,
@@ -212,7 +209,7 @@ const consultarSefaz = async (req, res) => {
             pfx: certificado,
             passphrase: password,
             minVersion: "TLSv1.2",
-            rejectUnauthorized: true, // Em produção, validar o certificado de destino
+            rejectUnauthorized: true, 
             secureOptions: crypto.constants.SSL_OP_NO_TLSv1 | crypto.constants.SSL_OP_NO_TLSv1_1,
             headers: {
                 "Content-Type": 'application/soap+xml; charset=utf-8',
@@ -228,7 +225,6 @@ const consultarSefaz = async (req, res) => {
             sefazResponse.setEncoding("utf8");
 
             console.log(`[${requestId}] SEFAZ STATUS: ${sefazResponse.statusCode}`);
-            console.log(`[${requestId}] SEFAZ HEADERS:`, JSON.stringify(sefazResponse.headers));
 
             sefazResponse.on("data", (chunk) => {
                 body += chunk;
@@ -287,7 +283,63 @@ const consultarSefaz = async (req, res) => {
 };
 
 // ================================
-// REGISTRO DE ROTAS DE CONSULTA E ALIASES
+// ENDPOINT: NFeDistribuicaoDFe (OPÇÃO A)
+// ================================
+app.post("/api/sefaz/distribuicao", validarAPI, async (req, res) => {
+    const { cnpj, pfxBase64, password, ultimoNsu, ufIbge, empresaId } = req.body;
+
+    if (!cnpj || !pfxBase64 || !password || ultimoNsu === undefined) {
+        return res.status(400).json({
+            success: false,
+            error: "Campos obrigatórios ausentes: cnpj, pfxBase64, password, ultimoNsu"
+        });
+    }
+
+    // Limpa o CNPJ mantendo apenas números
+    const cnpjLimpo = String(cnpj).replace(/\D/g, '');
+    
+    // A Sefaz exige o NSU com exatamente 15 dígitos preenchidos com zeros à esquerda
+    const nsuFormatado = String(ultimoNsu).padStart(15, '0');
+    
+    // O código da UF do autor. Se não for passado na requisição, usa "91" (Ambiente Nacional)
+    const cUF = ufIbge || "91";
+
+    // Constrói o Envelope SOAP para a distribuição de DFe (versão 1.01)
+    const soapEnvelope = `<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body>
+    <nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe">
+      <nfeDadosMsg>
+        <distDFeInt versao="1.01" xmlns="http://www.portalfiscal.inf.br/nfe">
+          <tpAmb>1</tpAmb>
+          <cUFAutor>${cUF}</cUFAutor>
+          <CNPJ>${cnpjLimpo}</CNPJ>
+          <distNSU>
+            <ultNSU>${nsuFormatado}</ultNSU>
+          </distNSU>
+        </distDFeInt>
+      </nfeDadosMsg>
+    </nfeDistDFeInteresse>
+  </soap12:Body>
+</soap12:Envelope>`;
+
+    // Transforma o req.body com os dados que a função `consultarSefaz` original espera
+    req.body = {
+        pfxBase64,
+        password,
+        empresaId,
+        endpoint: "https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx",
+        soapAction: "http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse",
+        soapEnvelope
+    };
+
+    // Redireciona para o handler que processa a comunicação Sefaz mTLS
+    return consultarSefaz(req, res);
+});
+
+
+// ================================
+// REGISTRO DE ROTAS DE CONSULTA GENÉRICA
 // ================================
 app.post("/api/sefaz/consultar", validarAPI, consultarSefaz);
 app.post("/backend/v1/xml/sync", validarAPI, consultarSefaz);
@@ -318,5 +370,6 @@ app.listen(PORT, "0.0.0.0", () => {
     console.log("Porta:", PORT);
     console.log("AUTH_KEY:", AUTH_KEY ? "OK" : "NÃO CONFIGURADA");
     console.log("XML_KEY:", XML_KEY ? "OK" : "NÃO CONFIGURADA");
+    console.log("Distribuição Simplificada Ativa: /api/sefaz/distribuicao");
     console.log("====================================");
 });
