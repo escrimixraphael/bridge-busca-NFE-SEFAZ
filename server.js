@@ -139,7 +139,7 @@ app.post("/api/sefaz/test-cert", validarAPI, async (req, res) => {
         const b64Limpo = sanitizarBase64(pfxBase64);
         const certificado = Buffer.from(b64Limpo, "base64");
         
-        crypto.createSecureContext({
+        tls.createSecureContext({
             pfx: certificado,
             passphrase: password
         });
@@ -204,7 +204,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
         }
 
         try {
-            crypto.createSecureContext({
+            tls.createSecureContext({
                 pfx: certificado,
                 passphrase: password
             });
