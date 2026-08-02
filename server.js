@@ -145,6 +145,8 @@ app.post("/api/sefaz/test-cert", validarAPI, async (req, res) => {
 
         return res.json({ success: true, message: "Certificado carregado e senha validada com sucesso." });
     } catch (error) {
+        // AJUSTE: Exibindo o erro real do OpenSSL
+        console.error("Falha ao abrir PFX no test-cert:", error.message);
         return res.status(400).json({ success: false, error: "Certificado ou senha inválidos: " + error.message });
     }
 });
@@ -206,8 +208,9 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
                 passphrase: password
             });
         } catch (err) {
-            console.error(`[${requestId}] Falha ao abrir PFX: Senha incorreta ou arquivo corrompido.`);
-            return res.status(400).json({ success: false, requestId, error: "Certificado PFX inválido ou senha incorreta." });
+            // AJUSTE: Logando e retornando a mensagem real do OpenSSL
+            console.error(`[${requestId}] Falha ao abrir PFX REAL:`, err.message);
+            return res.status(400).json({ success: false, requestId, error: "Erro PFX: " + err.message });
         }
 
         console.log(`[${requestId}] Empresa: ${empresaId || "N/A"}`);
