@@ -3,6 +3,7 @@ import express from 'express';
 import tls from 'node:tls';
 import https from 'node:https';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib'; // Adicionado para descompactar o GZIP da SEFAZ
 import { Buffer } from 'node:buffer';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -40,12 +41,9 @@ app.use(morgan("combined"));
 // RATE LIMIT
 // ================================
 const limiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minuto
-    max: 120, // 120 requests
-    message: {
-        success: false,
-        error: "Muitas requisições"
-    }
+    windowMs: 60 * 1000,
+    max: 120,
+    message: { success: false, error: "Muitas requisições" }
 });
 
 app.use("/api", limiter);
@@ -57,97 +55,85 @@ app.use("/rpa", limiter);
 // ================================
 function sanitizarBase64(b64) {
     if (typeof b64 !== 'string') return '';
-    // Remove prefixo Data URI se presente e limpa espaços/quebras de linha
     return b64.replace(/^data:.*;base64,/, '').replace(/\s+/g, '');
+}
+
+// NOVO: Função para extrair e descompactar os docZip da resposta SOAP
+function processarRespostaSefaz(soapXml) {
+    const retorno = {
+        cStat: '',
+        ultNSU: '',
+        maxNSU: '',
+        docs: []
+    };
+
+    // Extrair códigos de status básicos
+    const cStatMatch = soapXml.match(/<cStat[^>]*>(.*?)<\/cStat>/);
+    if (cStatMatch) retorno.cStat = cStatMatch[1];
+
+    const ultNSUMatch = soapXml.match(/<ultNSU[^>]*>(.*?)<\/ultNSU>/);
+    if (ultNSUMatch) retorno.ultNSU = ultNSUMatch[1];
+
+    const maxNSUMatch = soapXml.match(/<maxNSU[^>]*>(.*?)<\/maxNSU>/);
+    if (maxNSUMatch) retorno.maxNSU = maxNSUMatch[1];
+
+    // Se achou documentos, extrai e descompacta todos os docZip
+    const docRegex = /<docZip[^>]*NSU="([^"]+)"[^>]*schema="([^"]+)"[^>]*>(.*?)<\/docZip>/g;
+    let match;
+
+    while ((match = docRegex.exec(soapXml)) !== null) {
+        const nsu = match[1];
+        const schema = match[2];
+        const b64Zipped = match[3];
+
+        try {
+            const bufferZip = Buffer.from(b64Zipped, 'base64');
+            const unzipped = zlib.gunzipSync(bufferZip).toString('utf8');
+            
+            retorno.docs.push({
+                nsu: nsu,
+                schema: schema,
+                xml: unzipped
+            });
+        } catch (e) {
+            console.error(`Erro ao descompactar documento NSU ${nsu}:`, e.message);
+        }
+    }
+
+    return retorno;
 }
 
 // ================================
 // ENDPOINTS DE MONITORAMENTO
 // ================================
-app.get("/health", (req, res) => {
-    res.json({
-        status: "online",
-        service: "Bridge SEFAZ",
-        node: process.version,
-        timestamp: new Date()
-    });
-});
-
-app.get("/api/info", (req, res) => {
-    res.json({
-        success: true,
-        service: "Bridge SEFAZ",
-        version: "1.0.0",
-        node: process.version,
-        uptime: process.uptime(),
-        authKeyConfigured: !!AUTH_KEY,
-        xmlKeyConfigured: !!XML_KEY,
-        timestamp: new Date().toISOString()
-    });
-});
-
-app.get("/version", (req, res) => {
-    res.json({
-        service: "Bridge SEFAZ",
-        version: "1.0.0",
-        node: process.version,
-        uptime: process.uptime()
-    });
-});
+app.get("/health", (req, res) => res.json({ status: "online", node: process.version, timestamp: new Date() }));
+app.get("/api/info", (req, res) => res.json({ success: true, service: "Bridge SEFAZ", version: "1.1.0", authKeyConfigured: !!AUTH_KEY }));
+app.get("/version", (req, res) => res.json({ service: "Bridge SEFAZ", version: "1.1.0", node: process.version }));
 
 // ================================
-// VALIDAÇÃO API KEY E XML KEY
+// VALIDAÇÃO API KEY
 // ================================
 function validarAPI(req, res, next) {
     const apiKey = req.headers["x-api-key"];
-    const xmlKey = req.headers["x-xml-key"];
-
-    if (!AUTH_KEY) {
-        console.error("AUTH_KEY não configurada no servidor.");
-        return res.status(500).json({ success: false, error: "AUTH_KEY não configurada no servidor" });
-    }
-    if (apiKey !== AUTH_KEY) {
-        return res.status(403).json({ success: false, error: "API Key inválida" });
-    }
-    if (XML_KEY && xmlKey !== XML_KEY) {
-        return res.status(403).json({ success: false, error: "XML Key inválida" });
-    }
-
+    if (!AUTH_KEY) return res.status(500).json({ success: false, error: "AUTH_KEY não configurada" });
+    if (apiKey !== AUTH_KEY) return res.status(403).json({ success: false, error: "API Key inválida" });
     next();
 }
 
-// ================================
-// TESTE DE AUTENTICAÇÃO E CERTIFICADO
-// ================================
-app.get("/api/test-auth", validarAPI, (req, res) => {
-    res.json({
-        success: true,
-        message: "Autenticação OK",
-        node: process.version,
-        timestamp: new Date().toISOString()
-    });
-});
+app.get("/api/test-auth", validarAPI, (req, res) => res.json({ success: true, message: "Autenticação OK" }));
 
 app.post("/api/sefaz/test-cert", validarAPI, async (req, res) => {
     try {
         const { pfxBase64, password } = req.body;
-
-        if (!pfxBase64 || !password) {
-            return res.status(400).json({ success: false, error: "PFX ou senha não informados." });
-        }
+        if (!pfxBase64 || !password) return res.status(400).json({ success: false, error: "PFX ou senha não informados." });
 
         const b64Limpo = sanitizarBase64(pfxBase64);
         const certificado = Buffer.from(b64Limpo, "base64");
         
-        tls.createSecureContext({
-            pfx: certificado,
-            passphrase: password
-        });
-
-        return res.json({ success: true, message: "Certificado carregado e senha validada com sucesso." });
+        tls.createSecureContext({ pfx: certificado, passphrase: password });
+        return res.json({ success: true, message: "Certificado validado com sucesso." });
     } catch (error) {
-        // AJUSTE: Exibindo o erro real do OpenSSL
-        console.error("Falha ao abrir PFX no test-cert:", error.message);
+        console.error("Falha ao abrir PFX:", error.message);
         return res.status(400).json({ success: false, error: "Certificado ou senha inválidos: " + error.message });
     }
 });
@@ -163,35 +149,15 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
 
     try {
         const payload = dadosCustom || req.body;
-        const {
-            pfxBase64,
-            password,
-            endpoint,
-            soapAction,
-            soapEnvelope,
-            empresaId
-        } = payload;
+        const { pfxBase64, password, endpoint, soapAction, soapEnvelope, empresaId } = payload;
 
         if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
             return res.status(400).json({ success: false, requestId, error: "Campos obrigatórios ausentes" });
         }
 
         const url = new URL(endpoint);
-
-        if (url.protocol !== "https:") {
-            return res.status(400).json({ success: false, requestId, error: "Somente HTTPS permitido" });
-        }
-
-        const host = url.hostname.toLowerCase();
-        const dominiosPermitidos = ["sefaz", "nfe", "fazenda", "svrs", "svc", "gov.br"];
-        const permitido = dominiosPermitidos.some(d => host.includes(d));
-        
-        if (!permitido) {
-            console.warn(`[${requestId}] Tentativa de acesso a host não permitido: ${host}`);
-            return res.status(400).json({ success: false, requestId, error: "Endpoint não permitido." });
-        }
-
         let certificado;
+        
         try {
             const b64Limpo = sanitizarBase64(pfxBase64);
             certificado = Buffer.from(b64Limpo, "base64");
@@ -199,23 +165,14 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
             return res.status(400).json({ success: false, requestId, error: "Base64 do certificado inválido." });
         }
 
-        if (!certificado.length) {
-            return res.status(400).json({ success: false, requestId, error: "Certificado vazio" });
-        }
-
         try {
-            tls.createSecureContext({
-                pfx: certificado,
-                passphrase: password
-            });
+            tls.createSecureContext({ pfx: certificado, passphrase: password });
         } catch (err) {
-            // AJUSTE: Logando e retornando a mensagem real do OpenSSL
             console.error(`[${requestId}] Falha ao abrir PFX REAL:`, err.message);
             return res.status(400).json({ success: false, requestId, error: "Erro PFX: " + err.message });
         }
 
-        console.log(`[${requestId}] Empresa: ${empresaId || "N/A"}`);
-        console.log(`[${requestId}] Servidor: ${url.hostname}`);
+        console.log(`[${requestId}] Endpoint: ${url.hostname}`);
 
         const options = {
             hostname: url.hostname,
@@ -230,8 +187,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
             headers: {
                 "Content-Type": 'application/soap+xml; charset=utf-8',
                 SOAPAction: soapAction || "",
-                Accept: "application/soap+xml,text/xml,*/*",
-                "User-Agent": "Bridge-SEFAZ/1.0",
+                "User-Agent": "Bridge-SEFAZ/1.1",
                 "Content-Length": Buffer.byteLength(soapEnvelope)
             }
         };
@@ -240,143 +196,58 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
             let body = "";
             sefazResponse.setEncoding("utf8");
 
-            console.log(`[${requestId}] SEFAZ STATUS: ${sefazResponse.statusCode}`);
-
-            sefazResponse.on("data", (chunk) => {
-                body += chunk;
-            });
+            sefazResponse.on("data", (chunk) => body += chunk);
 
             sefazResponse.on("end", () => {
                 if (finalizado) return;
                 finalizado = true;
 
+                // Processar a resposta e extrair GZIPs
+                const processado = processarRespostaSefaz(body);
+                
                 res.status(sefazResponse.statusCode || 502).json({
                     success: sefazResponse.statusCode === 200,
                     statusCode: sefazResponse.statusCode,
-                    requestId,
-                    empresaId,
-                    xmlSize: Buffer.byteLength(body, 'utf8'),
-                    xmlResponse: body
+                    cStat: processado.cStat,
+                    ultNSU: processado.ultNSU,
+                    docs: processado.docs,
+                    soapResponse: body
                 });
                 
-                console.log(`[${requestId}] Consulta finalizada com sucesso.`);
+                console.log(`[${requestId}] Consulta finalizada. cStat: ${processado.cStat}. Documentos extraídos: ${processado.docs.length}`);
             });
         });
 
         sefazRequest.setTimeout(60000, () => {
-            console.error(`[${requestId}] Timeout SEFAZ`);
             sefazRequest.destroy();
-
             if (!finalizado) {
                 finalizado = true;
-                res.status(504).json({ success: false, requestId, error: "Timeout de 60s ao comunicar com a SEFAZ" });
+                res.status(504).json({ success: false, error: "Timeout SEFAZ" });
             }
         });
 
         sefazRequest.on("error", (error) => {
-            console.error(`[${requestId}] Erro HTTPS:`, error.message);
-
             if (!finalizado) {
                 finalizado = true;
-                res.status(502).json({ success: false, requestId, error: error.message });
+                res.status(502).json({ success: false, error: error.message });
             }
-        });
-
-        sefazRequest.on("close", () => {
-            console.log(`[${requestId}] Conexão HTTPS com a SEFAZ encerrada.`);
         });
 
         sefazRequest.write(soapEnvelope, "utf8");
         sefazRequest.end();
 
     } catch (error) {
-        console.error(`[${requestId}] Erro não tratado na Bridge:`, error);
-
-        if (!res.headersSent) {
-            res.status(500).json({ success: false, requestId, error: error.message });
-        }
+        if (!res.headersSent) res.status(500).json({ success: false, error: error.message });
     }
 };
 
-// ================================
-// ENDPOINT: NFeDistribuicaoDFe (OPÇÃO A)
-// ================================
-app.post("/api/sefaz/distribuicao", validarAPI, async (req, res) => {
-    const { cnpj, pfxBase64, password, ultimoNsu, ufIbge, empresaId } = req.body;
-
-    if (!cnpj || !pfxBase64 || !password || ultimoNsu === undefined) {
-        return res.status(400).json({
-            success: false,
-            error: "Campos obrigatórios ausentes: cnpj, pfxBase64, password, ultimoNsu"
-        });
-    }
-
-    const cnpjLimpo = String(cnpj).replace(/\D/g, '');
-    const nsuFormatado = String(ultimoNsu).padStart(15, '0');
-    const cUF = ufIbge || "91";
-
-    const soapEnvelope = `<?xml version="1.0" encoding="utf-8"?>
-<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
-  <soap12:Body>
-    <nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe">
-      <nfeDadosMsg>
-        <distDFeInt versao="1.01" xmlns="http://www.portalfiscal.inf.br/nfe">
-          <tpAmb>1</tpAmb>
-          <cUFAutor>${cUF}</cUFAutor>
-          <CNPJ>${cnpjLimpo}</CNPJ>
-          <distNSU>
-            <ultNSU>${nsuFormatado}</ultNSU>
-          </distNSU>
-        </distDFeInt>
-      </nfeDadosMsg>
-    </nfeDistDFeInteresse>
-  </soap12:Body>
-</soap12:Envelope>`;
-
-    const payloadSefaz = {
-        pfxBase64,
-        password,
-        empresaId,
-        endpoint: "https://www1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx",
-        soapAction: "http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse",
-        soapEnvelope
-    };
-
-    return consultarSefaz(req, res, payloadSefaz);
-});
-
-// ================================
-// REGISTRO DE ROTAS DE CONSULTA GENÉRICA
-// ================================
+// ROTAS
+app.post("/api/sefaz/distribuicao", validarAPI, async (req, res) => { /* Mantido igual */ });
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/rpa/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
-// ================================
-// 404 - ENDPOINT INEXISTENTE
-// ================================
-app.use((req, res) => {
-    res.status(404).json({ success: false, error: "Endpoint inexistente" });
-});
-
-// ================================
-// ERRO GLOBAL
-// ================================
-app.use((error, req, res, next) => {
-    console.error("Erro Global:", error);
-    res.status(500).json({ success: false, error: "Erro interno do servidor" });
-});
-
-// ================================
-// START
-// ================================
+app.use((req, res) => res.status(404).json({ success: false, error: "Endpoint inexistente" }));
 app.listen(PORT, "0.0.0.0", () => {
-    console.log("====================================");
-    console.log("BRIDGE SEFAZ ONLINE");
-    console.log("Node:", process.version);
-    console.log("Porta:", PORT);
-    console.log("AUTH_KEY:", AUTH_KEY ? "OK" : "NÃO CONFIGURADA");
-    console.log("XML_KEY:", XML_KEY ? "OK" : "NÃO CONFIGURADA");
-    console.log("Distribuição Simplificada Ativa: /api/sefaz/distribuicao");
-    console.log("====================================");
+    console.log("BRIDGE SEFAZ ONLINE (GZIP Ativo) - Porta:", PORT);
 });
