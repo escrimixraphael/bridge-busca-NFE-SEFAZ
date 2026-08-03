@@ -17,7 +17,7 @@ const PORT = Number(process.env.PORT || 3000);
 // ================================
 // CONFIGURAÇÃO DE PROXY (OBRIGATÓRIO RENDER)
 // ================================
-app.set('trust proxy', 1); // Corrige o erro de Validação do X-Forwarded-For no Express Rate Limit
+app.set('trust proxy', 1);
 
 // ================================
 // CONFIGURAÇÃO DE CHAVES E LOG INICIAL
@@ -153,7 +153,10 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
 
     try {
         const payload = dadosCustom || req.body;
-        const { pfxBase64, password, endpoint, soapAction, soapEnvelope, empresaId } = payload;
+        const { pfxBase64, password, endpoint, soapEnvelope, empresaId } = payload;
+        
+        // Fallback defensivo para o soapAction
+        const soapAction = payload.soapAction || "http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse";
 
         if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
             console.error(`[${requestId}] Erro: Campos obrigatórios ausentes no payload.`);
@@ -177,7 +180,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
             return res.status(400).json({ success: false, requestId, error: "Erro PFX: " + err.message });
         }
 
-        console.log(`[${requestId}] Endpoint: ${url.hostname}`);
+        console.log(`[${requestId}] Endpoint: ${url.hostname} | SOAPAction: ${soapAction}`);
 
         const options = {
             hostname: url.hostname,
@@ -190,8 +193,8 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
             rejectUnauthorized: true, 
             secureOptions: crypto.constants.SSL_OP_NO_TLSv1 | crypto.constants.SSL_OP_NO_TLSv1_1,
             headers: {
-                "Content-Type": 'application/soap+xml; charset=utf-8',
-                SOAPAction: soapAction || "",
+                "Content-Type": `application/soap+xml; charset=utf-8; action="${soapAction}"`,
+                SOAPAction: soapAction,
                 "User-Agent": "Bridge-SEFAZ/1.1",
                 "Content-Length": Buffer.byteLength(soapEnvelope)
             }
@@ -209,7 +212,6 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
 
                 const processado = processarRespostaSefaz(body);
                 
-                // Mapeamento seguro: erros da SEFAZ retornam 422 para não acionar o BRIDGE_UNAVAILABLE
                 const isSuccess = sefazResponse.statusCode === 200;
                 const statusToReturn = isSuccess ? 200 : 422;
 
