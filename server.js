@@ -15,6 +15,11 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
 // ================================
+// CONFIGURAÇÃO DE PROXY (OBRIGATÓRIO RENDER)
+// ================================
+app.set('trust proxy', 1); // Corrige o erro de Validação do X-Forwarded-For no Express Rate Limit
+
+// ================================
 // CONFIGURAÇÃO DE CHAVES E LOG INICIAL
 // ================================
 const AUTH_KEY = process.env.AUTH_KEY;
@@ -67,6 +72,8 @@ function processarRespostaSefaz(soapXml) {
         docs: []
     };
 
+    if (typeof soapXml !== 'string') return retorno;
+
     // Extrair códigos de status básicos
     const cStatMatch = soapXml.match(/<cStat[^>]*>(.*?)<\/cStat>/);
     if (cStatMatch) retorno.cStat = cStatMatch[1];
@@ -111,10 +118,10 @@ app.get("/api/info", (req, res) => res.json({ success: true, service: "Bridge SE
 app.get("/version", (req, res) => res.json({ service: "Bridge SEFAZ", version: "1.1.0", node: process.version }));
 
 // ================================
-// VALIDAÇÃO API KEY
+// VALIDAÇÃO API KEY (Flexível para x-api-key e x-xml-key)
 // ================================
 function validarAPI(req, res, next) {
-    const apiKey = req.headers["x-api-key"];
+    const apiKey = req.headers["x-api-key"] || req.headers["x-xml-key"];
     if (!AUTH_KEY) return res.status(500).json({ success: false, error: "AUTH_KEY não configurada" });
     if (apiKey !== AUTH_KEY) return res.status(403).json({ success: false, error: "API Key inválida" });
     next();
@@ -210,6 +217,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
                     statusCode: sefazResponse.statusCode,
                     cStat: processado.cStat,
                     ultNSU: processado.ultNSU,
+                    maxNSU: processado.maxNSU, // Incluído para compatibilidade total
                     docs: processado.docs,
                     soapResponse: body
                 });
@@ -241,13 +249,16 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
     }
 };
 
-// ROTAS
-app.post("/api/sefaz/distribuicao", validarAPI, async (req, res) => { /* Mantido igual */ });
+// ================================
+// ROTAS CORRIGIDAS (Agora todas apontam para a função)
+// ================================
+app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/rpa/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
 app.use((req, res) => res.status(404).json({ success: false, error: "Endpoint inexistente" }));
+
 app.listen(PORT, "0.0.0.0", () => {
     console.log("BRIDGE SEFAZ ONLINE (GZIP Ativo) - Porta:", PORT);
 });
