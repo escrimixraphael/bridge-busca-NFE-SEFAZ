@@ -17,7 +17,7 @@ const PORT = Number(process.env.PORT || 3000);
 // ================================
 // CONFIGURAÇÃO DE PROXY E SEGURANÇA
 // ================================
-app.set('trust proxy', 1); // Essencial para plataformas como Render (corrige Rate Limit / X-Forwarded-For)
+app.set('trust proxy', 1); // Corrige o erro do Rate Limit na Render
 app.disable('x-powered-by');
 app.use(helmet());
 app.use(cors({ origin: "*" }));
@@ -68,7 +68,8 @@ function processarRespostaSefaz(soapXml) {
         docs: []
     };
 
-    // Extrair códigos de status básicos
+    if (typeof soapXml !== 'string') return retorno;
+
     const cStatMatch = soapXml.match(/<cStat[^>]*>(.*?)<\/cStat>/);
     if (cStatMatch) retorno.cStat = cStatMatch[1];
 
@@ -78,7 +79,6 @@ function processarRespostaSefaz(soapXml) {
     const maxNSUMatch = soapXml.match(/<maxNSU[^>]*>(.*?)<\/maxNSU>/);
     if (maxNSUMatch) retorno.maxNSU = maxNSUMatch[1];
 
-    // Se achou documentos, extrai e descompacta todos os docZip
     const docRegex = /<docZip[^>]*NSU="([^"]+)"[^>]*schema="([^"]+)"[^>]*>(.*?)<\/docZip>/g;
     let match;
 
@@ -142,17 +142,18 @@ app.post("/api/sefaz/test-cert", validarAPI, async (req, res) => {
 // ================================
 // HANDLER GENÉRICO: CONSULTA SEFAZ MTLS
 // ================================
-const consultarSefaz = async (req, res, dadosCustom = null) => {
+const consultarSefaz = async (req, res) => {
     let finalizado = false;
     const requestId = crypto.randomUUID();
 
     console.log(`\n[${requestId}] ========== NOVA CONSULTA INICIADA ==========`);
 
     try {
-        const payload = dadosCustom || req.body;
-        const { pfxBase64, password, endpoint, soapAction, soapEnvelope } = payload;
+        const payload = req.body;
+        const { pfxBase64, password, endpoint, soapAction, soapEnvelope, empresaId } = payload;
 
         if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
+            console.error(`[${requestId}] Campos obrigatórios ausentes no payload recebido.`);
             return res.status(400).json({ success: false, requestId, error: "Campos obrigatórios ausentes" });
         }
 
@@ -173,7 +174,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
             return res.status(400).json({ success: false, requestId, error: "Erro PFX: " + err.message });
         }
 
-        console.log(`[${requestId}] Endpoint: ${url.hostname}`);
+        console.log(`[${requestId}] Empresa: ${empresaId || "N/A"} | Endpoint: ${url.hostname}`);
 
         const options = {
             hostname: url.hostname,
@@ -203,7 +204,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
                 if (finalizado) return;
                 finalizado = true;
 
-                // Processar a resposta e extrair GZIPs
+                // Processar a resposta e extrair GZIPs automaticamente
                 const processado = processarRespostaSefaz(body);
                 
                 res.status(sefazResponse.statusCode || 502).json({
