@@ -63,7 +63,6 @@ function sanitizarBase64(b64) {
     return b64.replace(/^data:.*;base64,/, '').replace(/\s+/g, '');
 }
 
-// Função para extrair e descompactar os docZip da resposta SOAP
 function processarRespostaSefaz(soapXml) {
     const retorno = {
         cStat: '',
@@ -157,7 +156,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
         const { pfxBase64, password, endpoint, soapAction, soapEnvelope, empresaId } = payload;
 
         if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
-            console.error(`[${requestId}] Erro: Campos obrigatórios ausentes no payload. PFX: ${!!pfxBase64}, Pass: ${!!password}, Endpoint: ${!!endpoint}, Envelope: ${!!soapEnvelope}`);
+            console.error(`[${requestId}] Erro: Campos obrigatórios ausentes no payload.`);
             return res.status(400).json({ success: false, requestId, error: "Campos obrigatórios ausentes" });
         }
 
@@ -210,8 +209,12 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
 
                 const processado = processarRespostaSefaz(body);
                 
-                res.status(sefazResponse.statusCode || 502).json({
-                    success: sefazResponse.statusCode === 200,
+                // Mapeamento seguro: erros da SEFAZ retornam 422 para não acionar o BRIDGE_UNAVAILABLE
+                const isSuccess = sefazResponse.statusCode === 200;
+                const statusToReturn = isSuccess ? 200 : 422;
+
+                res.status(statusToReturn).json({
+                    success: isSuccess,
                     statusCode: sefazResponse.statusCode,
                     cStat: processado.cStat,
                     ultNSU: processado.ultNSU,
@@ -220,7 +223,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
                     soapResponse: body
                 });
                 
-                console.log(`[${requestId}] Consulta finalizada. cStat: ${processado.cStat}. Documentos extraídos: ${processado.docs.length}`);
+                console.log(`[${requestId}] Consulta finalizada. SEFAZ Status: ${sefazResponse.statusCode} | cStat: ${processado.cStat}. Documentos: ${processado.docs.length}`);
             });
         });
 
@@ -248,7 +251,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
 };
 
 // ================================
-// ROTAS CORRETAS (Todas apontando para o handler)
+// ROTAS DE INTEGRAÇÃO
 // ================================
 app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
