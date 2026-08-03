@@ -3,7 +3,7 @@ import express from 'express';
 import tls from 'node:tls';
 import https from 'node:https';
 import crypto from 'node:crypto';
-import zlib from 'node:zlib';
+import zlib from 'node:zlib'; // Adicionado para descompactar o GZIP da SEFAZ
 import { Buffer } from 'node:buffer';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -15,15 +15,9 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
 // ================================
-// CONFIGURAÇÃO DE PROXY E SEGURANÇA
+// CONFIGURAÇÃO DE PROXY (OBRIGATÓRIO RENDER)
 // ================================
-app.set('trust proxy', 1); // Corrige o erro do Rate Limit na Render
-app.disable('x-powered-by');
-app.use(helmet());
-app.use(cors({ origin: "*" }));
-app.use(compression());
-app.use(express.json({ limit: "20mb" }));
-app.use(morgan("combined"));
+app.set('trust proxy', 1); // Corrige o erro de Validação do X-Forwarded-For no Express Rate Limit
 
 // ================================
 // CONFIGURAÇÃO DE CHAVES E LOG INICIAL
@@ -37,6 +31,16 @@ console.log("AUTH_KEY carregada:", !!AUTH_KEY);
 console.log("XML_KEY carregada:", !!XML_KEY);
 console.log("NODE_ENV:", process.env.NODE_ENV || "development");
 console.log("====================================");
+
+// ================================
+// MIDDLEWARES GERAIS
+// ================================
+app.disable('x-powered-by');
+app.use(helmet());
+app.use(cors({ origin: "*" }));
+app.use(compression());
+app.use(express.json({ limit: "20mb" }));
+app.use(morgan("combined"));
 
 // ================================
 // RATE LIMIT
@@ -59,7 +63,7 @@ function sanitizarBase64(b64) {
     return b64.replace(/^data:.*;base64,/, '').replace(/\s+/g, '');
 }
 
-// Função para extrair e descompactar os docZip da resposta SOAP da SEFAZ
+// NOVO: Função para extrair e descompactar os docZip da resposta SOAP
 function processarRespostaSefaz(soapXml) {
     const retorno = {
         cStat: '',
@@ -70,6 +74,7 @@ function processarRespostaSefaz(soapXml) {
 
     if (typeof soapXml !== 'string') return retorno;
 
+    // Extrair códigos de status básicos
     const cStatMatch = soapXml.match(/<cStat[^>]*>(.*?)<\/cStat>/);
     if (cStatMatch) retorno.cStat = cStatMatch[1];
 
@@ -79,6 +84,7 @@ function processarRespostaSefaz(soapXml) {
     const maxNSUMatch = soapXml.match(/<maxNSU[^>]*>(.*?)<\/maxNSU>/);
     if (maxNSUMatch) retorno.maxNSU = maxNSUMatch[1];
 
+    // Se achou documentos, extrai e descompacta todos os docZip
     const docRegex = /<docZip[^>]*NSU="([^"]+)"[^>]*schema="([^"]+)"[^>]*>(.*?)<\/docZip>/g;
     let match;
 
@@ -112,7 +118,7 @@ app.get("/api/info", (req, res) => res.json({ success: true, service: "Bridge SE
 app.get("/version", (req, res) => res.json({ service: "Bridge SEFAZ", version: "1.1.0", node: process.version }));
 
 // ================================
-// VALIDAÇÃO API KEY
+// VALIDAÇÃO API KEY (Flexível para x-api-key e x-xml-key)
 // ================================
 function validarAPI(req, res, next) {
     const apiKey = req.headers["x-api-key"] || req.headers["x-xml-key"];
@@ -142,18 +148,17 @@ app.post("/api/sefaz/test-cert", validarAPI, async (req, res) => {
 // ================================
 // HANDLER GENÉRICO: CONSULTA SEFAZ MTLS
 // ================================
-const consultarSefaz = async (req, res) => {
+const consultarSefaz = async (req, res, dadosCustom = null) => {
     let finalizado = false;
     const requestId = crypto.randomUUID();
 
     console.log(`\n[${requestId}] ========== NOVA CONSULTA INICIADA ==========`);
 
     try {
-        const payload = req.body;
+        const payload = dadosCustom || req.body;
         const { pfxBase64, password, endpoint, soapAction, soapEnvelope, empresaId } = payload;
 
         if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
-            console.error(`[${requestId}] Campos obrigatórios ausentes no payload recebido.`);
             return res.status(400).json({ success: false, requestId, error: "Campos obrigatórios ausentes" });
         }
 
@@ -174,7 +179,7 @@ const consultarSefaz = async (req, res) => {
             return res.status(400).json({ success: false, requestId, error: "Erro PFX: " + err.message });
         }
 
-        console.log(`[${requestId}] Empresa: ${empresaId || "N/A"} | Endpoint: ${url.hostname}`);
+        console.log(`[${requestId}] Endpoint: ${url.hostname}`);
 
         const options = {
             hostname: url.hostname,
@@ -204,7 +209,7 @@ const consultarSefaz = async (req, res) => {
                 if (finalizado) return;
                 finalizado = true;
 
-                // Processar a resposta e extrair GZIPs automaticamente
+                // Processar a resposta e extrair GZIPs
                 const processado = processarRespostaSefaz(body);
                 
                 res.status(sefazResponse.statusCode || 502).json({
@@ -212,7 +217,7 @@ const consultarSefaz = async (req, res) => {
                     statusCode: sefazResponse.statusCode,
                     cStat: processado.cStat,
                     ultNSU: processado.ultNSU,
-                    maxNSU: processado.maxNSU,
+                    maxNSU: processado.maxNSU, // Incluído para compatibilidade total
                     docs: processado.docs,
                     soapResponse: body
                 });
@@ -245,16 +250,13 @@ const consultarSefaz = async (req, res) => {
 };
 
 // ================================
-// ROTAS DE INTEGRAÇÃO
+// ROTAS CORRIGIDAS (Agora todas apontam para a função)
 // ================================
 app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/rpa/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
-// ================================
-// INICIALIZAÇÃO DO SERVIDOR
-// ================================
 app.use((req, res) => res.status(404).json({ success: false, error: "Endpoint inexistente" }));
 
 app.listen(PORT, "0.0.0.0", () => {
