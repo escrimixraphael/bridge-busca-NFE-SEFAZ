@@ -3,7 +3,7 @@ import express from 'express';
 import tls from 'node:tls';
 import https from 'node:https';
 import crypto from 'node:crypto';
-import zlib from 'node:zlib'; // Adicionado para descompactar o GZIP da SEFAZ
+import zlib from 'node:zlib';
 import { Buffer } from 'node:buffer';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -13,6 +13,17 @@ import rateLimit from 'express-rate-limit';
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+
+// ================================
+// CONFIGURAÇÃO DE PROXY E SEGURANÇA
+// ================================
+app.set('trust proxy', 1); // Essencial para plataformas como Render (corrige Rate Limit / X-Forwarded-For)
+app.disable('x-powered-by');
+app.use(helmet());
+app.use(cors({ origin: "*" }));
+app.use(compression());
+app.use(express.json({ limit: "20mb" }));
+app.use(morgan("combined"));
 
 // ================================
 // CONFIGURAÇÃO DE CHAVES E LOG INICIAL
@@ -26,16 +37,6 @@ console.log("AUTH_KEY carregada:", !!AUTH_KEY);
 console.log("XML_KEY carregada:", !!XML_KEY);
 console.log("NODE_ENV:", process.env.NODE_ENV || "development");
 console.log("====================================");
-
-// ================================
-// MIDDLEWARES GERAIS
-// ================================
-app.disable('x-powered-by');
-app.use(helmet());
-app.use(cors({ origin: "*" }));
-app.use(compression());
-app.use(express.json({ limit: "20mb" }));
-app.use(morgan("combined"));
 
 // ================================
 // RATE LIMIT
@@ -58,7 +59,7 @@ function sanitizarBase64(b64) {
     return b64.replace(/^data:.*;base64,/, '').replace(/\s+/g, '');
 }
 
-// NOVO: Função para extrair e descompactar os docZip da resposta SOAP
+// Função para extrair e descompactar os docZip da resposta SOAP da SEFAZ
 function processarRespostaSefaz(soapXml) {
     const retorno = {
         cStat: '',
@@ -114,7 +115,7 @@ app.get("/version", (req, res) => res.json({ service: "Bridge SEFAZ", version: "
 // VALIDAÇÃO API KEY
 // ================================
 function validarAPI(req, res, next) {
-    const apiKey = req.headers["x-api-key"];
+    const apiKey = req.headers["x-api-key"] || req.headers["x-xml-key"];
     if (!AUTH_KEY) return res.status(500).json({ success: false, error: "AUTH_KEY não configurada" });
     if (apiKey !== AUTH_KEY) return res.status(403).json({ success: false, error: "API Key inválida" });
     next();
@@ -149,7 +150,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
 
     try {
         const payload = dadosCustom || req.body;
-        const { pfxBase64, password, endpoint, soapAction, soapEnvelope, empresaId } = payload;
+        const { pfxBase64, password, endpoint, soapAction, soapEnvelope } = payload;
 
         if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
             return res.status(400).json({ success: false, requestId, error: "Campos obrigatórios ausentes" });
@@ -202,7 +203,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
                 if (finalizado) return;
                 finalizado = true;
 
-                // Processar a resposta e extrair GZIPs
+                // Processa a resposta SOAP e extrai os GZIPs dos documentos
                 const processado = processarRespostaSefaz(body);
                 
                 res.status(sefazResponse.statusCode || 502).json({
@@ -210,6 +211,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
                     statusCode: sefazResponse.statusCode,
                     cStat: processado.cStat,
                     ultNSU: processado.ultNSU,
+                    maxNSU: processado.maxNSU,
                     docs: processado.docs,
                     soapResponse: body
                 });
@@ -241,13 +243,19 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
     }
 };
 
-// ROTAS
-app.post("/api/sefaz/distribuicao", validarAPI, async (req, res) => { /* Mantido igual */ });
+// ================================
+// ROTAS DE INTEGRAÇÃO
+// ================================
+app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/rpa/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
+// ================================
+// INICIALIZAÇÃO DO SERVIDOR
+// ================================
 app.use((req, res) => res.status(404).json({ success: false, error: "Endpoint inexistente" }));
+
 app.listen(PORT, "0.0.0.0", () => {
     console.log("BRIDGE SEFAZ ONLINE (GZIP Ativo) - Porta:", PORT);
 });
