@@ -3,7 +3,7 @@ import express from 'express';
 import tls from 'node:tls';
 import https from 'node:https';
 import crypto from 'node:crypto';
-import zlib from 'node:zlib'; // Adicionado para descompactar o GZIP da SEFAZ
+import zlib from 'node:zlib';
 import { Buffer } from 'node:buffer';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -63,7 +63,7 @@ function sanitizarBase64(b64) {
     return b64.replace(/^data:.*;base64,/, '').replace(/\s+/g, '');
 }
 
-// NOVO: Função para extrair e descompactar os docZip da resposta SOAP
+// Função para extrair e descompactar os docZip da resposta SOAP
 function processarRespostaSefaz(soapXml) {
     const retorno = {
         cStat: '',
@@ -74,7 +74,6 @@ function processarRespostaSefaz(soapXml) {
 
     if (typeof soapXml !== 'string') return retorno;
 
-    // Extrair códigos de status básicos
     const cStatMatch = soapXml.match(/<cStat[^>]*>(.*?)<\/cStat>/);
     if (cStatMatch) retorno.cStat = cStatMatch[1];
 
@@ -84,7 +83,6 @@ function processarRespostaSefaz(soapXml) {
     const maxNSUMatch = soapXml.match(/<maxNSU[^>]*>(.*?)<\/maxNSU>/);
     if (maxNSUMatch) retorno.maxNSU = maxNSUMatch[1];
 
-    // Se achou documentos, extrai e descompacta todos os docZip
     const docRegex = /<docZip[^>]*NSU="([^"]+)"[^>]*schema="([^"]+)"[^>]*>(.*?)<\/docZip>/g;
     let match;
 
@@ -118,7 +116,7 @@ app.get("/api/info", (req, res) => res.json({ success: true, service: "Bridge SE
 app.get("/version", (req, res) => res.json({ service: "Bridge SEFAZ", version: "1.1.0", node: process.version }));
 
 // ================================
-// VALIDAÇÃO API KEY (Flexível para x-api-key e x-xml-key)
+// VALIDAÇÃO API KEY
 // ================================
 function validarAPI(req, res, next) {
     const apiKey = req.headers["x-api-key"] || req.headers["x-xml-key"];
@@ -159,6 +157,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
         const { pfxBase64, password, endpoint, soapAction, soapEnvelope, empresaId } = payload;
 
         if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
+            console.error(`[${requestId}] Erro: Campos obrigatórios ausentes no payload. PFX: ${!!pfxBase64}, Pass: ${!!password}, Endpoint: ${!!endpoint}, Envelope: ${!!soapEnvelope}`);
             return res.status(400).json({ success: false, requestId, error: "Campos obrigatórios ausentes" });
         }
 
@@ -209,7 +208,6 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
                 if (finalizado) return;
                 finalizado = true;
 
-                // Processar a resposta e extrair GZIPs
                 const processado = processarRespostaSefaz(body);
                 
                 res.status(sefazResponse.statusCode || 502).json({
@@ -217,7 +215,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
                     statusCode: sefazResponse.statusCode,
                     cStat: processado.cStat,
                     ultNSU: processado.ultNSU,
-                    maxNSU: processado.maxNSU, // Incluído para compatibilidade total
+                    maxNSU: processado.maxNSU,
                     docs: processado.docs,
                     soapResponse: body
                 });
@@ -250,7 +248,7 @@ const consultarSefaz = async (req, res, dadosCustom = null) => {
 };
 
 // ================================
-// ROTAS CORRIGIDAS (Agora todas apontam para a função)
+// ROTAS CORRETAS (Todas apontando para o handler)
 // ================================
 app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
