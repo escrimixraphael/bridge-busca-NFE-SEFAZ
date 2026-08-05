@@ -301,7 +301,7 @@ app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, r
 app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
 // ================================
-// HANDLER GENÉRICO: CONSULTA SEFAZ MTLS / MANIFESTAÇÃO
+// ROTA DE MANIFESTAÇÃO INDEPENDENTE
 // ================================
 app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
     let finalizado = false;
@@ -313,6 +313,8 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
         }
 
         const soapEnvelope = gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password);
+        
+        // URL ajustada estritamente para o Ambiente Nacional de Recepção de Eventos v4.00
         const endpointUrl = new URL("https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx");
         const soapAction = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento";
 
@@ -328,13 +330,13 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
             passphrase: password,
             minVersion: "TLSv1.2",
             maxVersion: "TLSv1.2",
-            rejectUnauthorized: false, // Ignora restrições intermediárias de CA se houver no Render
+            rejectUnauthorized: true,
             ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-GCM-SHA384',
             headers: {
                 "Cache-Control": "no-cache",
                 "Content-Type": "application/soap+xml; charset=utf-8; action=\"" + soapAction + "\"",
                 "SOAPAction": soapAction,
-                "User-Agent": "Mozilla/4.0 (compatible; MSIE 6.0; MSVB VM on Win32)",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
                 "Content-Length": soapBuffer.length
             }
         };
