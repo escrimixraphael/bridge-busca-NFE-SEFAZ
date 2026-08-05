@@ -402,29 +402,6 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
     }
 });
         
-        sefazReq.setTimeout(60000, () => {
-            sefazReq.destroy();
-            if (!finalizado) {
-                finalizado = true;
-                return res.status(504).json({ success: false, error: "Timeout ao conectar com a SEFAZ" });
-            }
-        });
-
-        sefazReq.on("error", (err) => {
-            if (!finalizado) {
-                finalizado = true;
-                return res.status(502).json({ success: false, error: "Erro de conexão: " + err.message });
-            }
-        });
-
-        sefazReq.write(soapEnvelope, "utf8");
-        sefazReq.end();
-
-    } catch (error) {
-        return res.status(500).json({ success: false, error: "Falha interna no Bridge: " + error.message });
-    }
-});
-
 app.use((req, res) => res.status(404).json({ success: false, error: "Endpoint inexistente" }));
 
 app.listen(PORT, "0.0.0.0", () => {
