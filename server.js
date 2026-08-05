@@ -309,7 +309,7 @@ function obterEndpointEvento(chave, endpointFornecido) {
     // Mapeamento oficial dos webservices de Recepção de Eventos v4.00 por UF
     const endpointsUF = {
         // Paraná (URL oficial fornecida pela SEFAZ-PR)
-        '41': ' https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
+        '41': ' https://mdfe.svrs.rs.gov.br/ws/MDFeRecepcaoEvento/MDFeRecepcaoEvento.asmx',
 
         // São Paulo
         '35': 'https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx',
