@@ -306,10 +306,9 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
     
     const certB64 = certPem.replace(/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\r|\n/g, '');
 
-    // 2. Montagem do XML do Evento
+    // 2. Montagem do ID e Data UTC-3 padrão SEFAZ
     const idEvento = `ID${evt.tp}${chave}01`;
     
-    // Data UTC-3 padrão SEFAZ
     const date = new Date();
     const tzo = -date.getTimezoneOffset();
     const dif = tzo >= 0 ? '+' : '-';
@@ -325,6 +324,7 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 
     const justificativaXML = evt.tp === '210240' ? '<xJust>Operacao nao realizada pelo destinatario</xJust>' : '';
 
+    // 3. Montagem estrita do infEvento com o namespace padrão da SEFAZ
     const xmlInfEvento = `<infEvento Id="${idEvento}" xmlns="http://www.portalfiscal.inf.br/nfe">` +
         `<cOrgao>91</cOrgao>` +
         `<tpAmb>1</tpAmb>` +
@@ -340,7 +340,7 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
         `</detEvento>` +
         `</infEvento>`;
 
-    // 3. Assinatura do XML com xml-crypto utilizando XPath direto no ID
+    // 4. Assinatura Digital do infEvento
     const sig = new SignedXml();
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
     sig.signatureAlgorithm = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
@@ -359,15 +359,32 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
     };
     sig.computeSignature(xmlInfEvento);
     
-    const signatureXml = sig.getSignedXml();
+    let signatureXml = sig.getSignedXml();
+    
+    // Normaliza os namespaces da assinatura exigidos rigidamente pela SEFAZ
+    signatureXml = signatureXml
+        .replace('<Signature>', '<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">')
+        .replace('<SignedInfo>', '<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#">')
+        .replace('<CanonicalizationMethod', '<CanonicalizationMethod xmlns="http://www.w3.org/2000/09/xmldsig#"')
+        .replace('<SignatureMethod', '<SignatureMethod xmlns="http://www.w3.org/2000/09/xmldsig#"')
+        .replace('<Reference', '<Reference xmlns="http://www.w3.org/2000/09/xmldsig#"')
+        .replace('<Transforms>', '<Transforms xmlns="http://www.w3.org/2000/09/xmldsig#">')
+        .replace('<Transform', '<Transform xmlns="http://www.w3.org/2000/09/xmldsig#"')
+        .replace('<DigestMethod', '<DigestMethod xmlns="http://www.w3.org/2000/09/xmldsig#"')
+        .replace('<DigestValue>', '<DigestValue xmlns="http://www.w3.org/2000/09/xmldsig#">')
+        .replace('<SignatureValue>', '<SignatureValue xmlns="http://www.w3.org/2000/09/xmldsig#">')
+        .replace('<KeyInfo>', '<KeyInfo xmlns="http://www.w3.org/2000/09/xmldsig#">')
+        .replace('<X509Data>', '<X509Data xmlns="http://www.w3.org/2000/09/xmldsig#">')
+        .replace('<X509Certificate>', '<X509Certificate xmlns="http://www.w3.org/2000/09/xmldsig#">');
 
-    // 4. Montagem oficial estruturada: o elemento <evento> encapsula o <infEvento> e a <Signature> lado a lado
+    // 5. Estrutura limpa e oficial do evento (evento encapsula infEvento e Signature no mesmo nível)
+    const xmlLimpoInf = xmlInfEvento.replace(' xmlns="http://www.portalfiscal.inf.br/nfe"', '');
     const xmlEventoAssinado = `<evento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00">` +
-        xmlInfEvento.replace(' xmlns="http://www.portalfiscal.inf.br/nfe"', '') +
-        signatureXml.replace('<Signature>', '<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">') +
+        xmlLimpoInf +
+        signatureXml +
         `</evento>`;
 
-    // 5. Encapsulamento final no Envelope SOAP exigido pelo WebService da Sefaz
+    // 6. Envelope SOAP oficial do WebService NFeRecepcaoEvento4
     const soap = `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
     <soap12:Body>
