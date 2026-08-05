@@ -306,26 +306,25 @@ function obterEndpointEvento(chave, endpointFornecido) {
     // Extrai o código da UF dos 2 primeiros dígitos da chave de acesso
     const cUF = chave ? chave.substring(0, 2) : '41';
 
-    // Mapeamento oficial dos webservices de Recepção de Eventos v4.00 por UF
-    // Estados atendidos pela SVRS (Sefaz Virtual Rio Grande do Sul): PR, SC, RS, RJ, ES, MS, MT, PA, AL, PB, PI, RO, RR, SE, TO, AP, AC
-    const estadosSVRS = ['41', '43', '42', '33', '32', '50', '51', '15', '27', '25', '22', '11', '14', '28', '17', '16', '12'];
+    // Mapeamento correto e exato dos webservices de Recepção de Eventos v4.00
+    const endpointsUF = {
+        // Estados atendidos pela SVRS (Sefaz Virtual Rio Grande do Sul): PR, SC, RS, RJ, ES, MS, MT, PA, AL, PB, PI, RO, RR, SE, TO, AP, AC
+        '41': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
+        '43': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
+        '42': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
+        '33': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
+        '32': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
+        '50': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
+        '51': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
+        
+        // São Paulo
+        '35': 'https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx',
+        
+        // Minas Gerais
+        '31': 'https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4'
+    };
 
-    if (estadosSVRS.includes(cUF)) {
-        return "https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
-    }
-
-    if (cUF === '35') {
-        // São Paulo possui webservice próprio para eventos
-        return "https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx";
-    }
-
-    if (cUF === '31') {
-        // Minas Gerais possui webservice próprio
-        return "https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4";
-    }
-
-    // Fallback padrão para Ambiente Nacional (AN)
-    return "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
+    return endpointsUF[cUF] || "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
 }                               
 
 app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
