@@ -303,8 +303,28 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 function obterEndpointEvento(chave, endpointFornecido) {
     if (endpointFornecido) return endpointFornecido;
 
-    // Para eventos de Manifestação do Destinatário (NF-e), o Ambiente Nacional (AN) 
-    // é o padrão universal oficial unificado para processamento de eventos de terceiros.
+    // Extrai o código da UF dos 2 primeiros dígitos da chave de acesso
+    const cUF = chave ? chave.substring(0, 2) : '41';
+
+    // Mapeamento oficial dos webservices de Recepção de Eventos v4.00 por UF
+    // Estados atendidos pela SVRS (Sefaz Virtual Rio Grande do Sul): PR, SC, RS, RJ, ES, MS, MT, PA, AL, PB, PI, RO, RR, SE, TO, AP, AC
+    const estadosSVRS = ['41', '43', '42', '33', '32', '50', '51', '15', '27', '25', '22', '11', '14', '28', '17', '16', '12'];
+
+    if (estadosSVRS.includes(cUF)) {
+        return "https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
+    }
+
+    if (cUF === '35') {
+        // São Paulo possui webservice próprio para eventos
+        return "https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx";
+    }
+
+    if (cUF === '31') {
+        // Minas Gerais possui webservice próprio
+        return "https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4";
+    }
+
+    // Fallback padrão para Ambiente Nacional (AN)
     return "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
 }                               
 
