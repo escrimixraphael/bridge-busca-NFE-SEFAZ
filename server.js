@@ -304,10 +304,9 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
     }
     if (!privateKeyPem || !certPem) throw new Error("Não foi possível extrair a chave do certificado.");
     
-    // Limpa os cabeçalhos para embutir na tag X509Certificate
     const certB64 = certPem.replace(/-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\r|\n/g, '');
 
-    // 2. Montagem do XML do Evento
+    // 2. Montagem do XML do Evento (Com namespaces estritos da SEFAZ)
     const idEvento = `ID${evt.tp}${chave}01`;
     
     // Data UTC-3 padrão SEFAZ
@@ -326,28 +325,27 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 
     const justificativaXML = evt.tp === '210240' ? '<xJust>Operacao nao realizada pelo destinatario</xJust>' : '';
 
-    const xmlNaoAssinado = `<evento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00">
-    <infEvento Id="${idEvento}">
-        <cOrgao>91</cOrgao>
-        <tpAmb>1</tpAmb>
-        <CNPJ>${cnpj}</CNPJ>
-        <chNFe>${chave}</chNFe>
-        <dhEvento>${dhEvento}</dhEvento>
-        <tpEvento>${evt.tp}</tpEvento>
-        <nSeqEvento>1</nSeqEvento>
-        <verEvento>1.00</verEvento>
-        <detEvento versao="1.00">
-            <descEvento>${evt.desc}</descEvento>${justificativaXML}
-        </detEvento>
-    </infEvento>
-</evento>`;
+    const xmlNaoAssinado = `<infEvento Id="${idEvento}" xmlns="http://www.portalfiscal.inf.br/nfe">` +
+        `<cOrgao>91</cOrgao>` +
+        `<tpAmb>1</tpAmb>` +
+        `<CNPJ>${cnpj}</CNPJ>` +
+        `<chNFe>${chave}</chNFe>` +
+        `<dhEvento>${dhEvento}</dhEvento>` +
+        `<tpEvento>${evt.tp}</tpEvento>` +
+        `<nSeqEvento>1</nSeqEvento>` +
+        `<verEvento>1.00</verEvento>` +
+        `<detEvento versao="1.00">` +
+        `<descEvento>${evt.desc}</descEvento>` +
+        justificativaXML +
+        `</detEvento>` +
+        `</infEvento>`;
 
-   // 3. Assinatura do XML com xml-crypto corrigida
+    // 3. Assinatura do XML com xml-crypto ajustada para a estrutura exata do infEvento
     const sig = new SignedXml();
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
     sig.signatureAlgorithm = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
     sig.addReference({
-        xpath: "//*[local-name(.)='infEvento']",
+        xpath: "//*[@Id='" + idEvento + "']",
         transforms: [
             "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
             "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
@@ -355,23 +353,23 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
         digestAlgorithm: "http://www.w3.org/2000/09/xmldsig#sha1"
     });
     
-    // CORREÇÃO AQUI: mudou de signingKey para privateKey
     sig.privateKey = privateKeyPem;
-
     sig.keyInfoProvider = {
         getKeyInfo: () => `<X509Data><X509Certificate>${certB64}</X509Certificate></X509Data>`
     };
     sig.computeSignature(xmlNaoAssinado);
     const xmlAssinado = sig.getSignedXml();
 
-    // 4. Encapsulamento no Envelope SOAP da Sefaz
+    // 4. Encapsulamento no Envelope SOAP e Estrutura correta de Lote do Evento
     const soap = `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
     <soap12:Body>
         <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">
             <envEvento versao="1.00" xmlns="http://www.portalfiscal.inf.br/nfe">
                 <idLote>1</idLote>
-                ${xmlAssinado}
+                <evento versao="1.00">
+                    ${xmlAssinado}
+                </evento>
             </envEvento>
         </nfeDadosMsg>
     </soap12:Body>
@@ -379,6 +377,7 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 
     return soap;
 }
+
 // ================================
 // ROTAS DE INTEGRAÇÃO
 // ================================
