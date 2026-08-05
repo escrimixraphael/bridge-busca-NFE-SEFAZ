@@ -407,7 +407,9 @@ app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
-// >>> NOVA ROTA DE MANIFESTAÇÃO INDEPENDENTE <<<
+// ================================
+// ROTA DE MANIFESTAÇÃO INDEPENDENTE
+// ================================
 app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
     let finalizado = false;
     try {
@@ -417,7 +419,6 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
             return res.status(400).json({ success: false, error: "Dados incompletos para a manifestação." });
         }
 
-        // 1. Gera o XML assinado e envelopado no SOAP localmente
         const soapEnvelope = gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password);
         const endpointUrl = new URL("https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx");
         const soapAction = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento";
@@ -451,27 +452,40 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
                 if (finalizado) return;
                 finalizado = true;
 
+                // Loga a resposta crua no console do Render para diagnóstico definitivo
+                console.log("=== RESPOSTA CRUA SEFAZ (MANIFESTAÇÃO) ===");
+                console.log(body);
+                console.log("==========================================");
+
                 const cStatMatch = body.match(/<cStat[^>]*>(.*?)<\/cStat>/g);
                 const cStatLote = cStatMatch && cStatMatch.length > 0 ? cStatMatch[0].replace(/<\/?cStat[^>]*>/g, '') : '';
                 const cStatEvento = cStatMatch && cStatMatch.length > 1 ? cStatMatch[1].replace(/<\/?cStat[^>]*>/g, '') : '';
                 const cStatFinal = cStatEvento || cStatLote;
 
                 const xMotivoMatch = body.match(/<xMotivo[^>]*>(.*?)<\/xMotivo>/g);
-                const xMotivo = xMotivoMatch && xMotivoMatch.length > 0 ? xMotivoMatch[xMotivoMatch.length - 1].replace(/<\/?xMotivo[^>]*>/g, '') : 'Resposta desconhecida da SEFAZ';
+                const xMotivo = xMotivoMatch && xMotivoMatch.length > 0 ? xMotivoMatch[xMotivoMatch.length - 1].replace(/<\/?xMotivo[^>]*>/g, '') : null;
 
-                // cStat 135 (Registrado e vinculado), 136 (Registrado mas já vinculado)
+                // Fallback para capturar erros de SOAP Fault caso existam
+                let faultString = '';
+                if (!xMotivo) {
+                    const faultMatch = body.match(/<faultstring[^>]*>(.*?)<\/faultstring>/i) || body.match(/<reason[^>]*>(.*?)<\/reason>/i);
+                    if (faultMatch) faultString = faultMatch[1];
+                }
+
+                const motivoFinal = xMotivo || faultString || (body.length < 300 ? body : 'Resposta incompatível da SEFAZ');
+
                 const isSuccess = sefazRes.statusCode === 200 && (cStatFinal === '135' || cStatFinal === '136');
 
                 if (isSuccess) {
                     return res.json({
                         success: true,
-                        message: `Manifestação registrada com sucesso: ${xMotivo}`,
+                        message: `Manifestação registrada com sucesso: ${motivoFinal}`,
                         cStat: cStatFinal
                     });
                 } else {
                     return res.status(400).json({
                         success: false,
-                        error: `SEFAZ (${cStatFinal || sefazRes.statusCode}): ${xMotivo}`
+                        error: `SEFAZ (${cStatFinal || sefazRes.statusCode}): ${motivoFinal}`
                     });
                 }
             });
@@ -499,14 +513,4 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
         console.error("Erro na rota de manifestação:", error);
         return res.status(500).json({ success: false, error: "Falha interna no Bridge: " + error.message });
     }
-});
-
-app.use((req, res) => res.status(404).json({ success: false, error: "Endpoint inexistente" }));
-
-app.listen(PORT, "0.0.0.0", () => {
-    console.log("BRIDGE SEFAZ ONLINE (GZIP Ativo) - Porta:", PORT);
-});
-
-app.listen(PORT, "0.0.0.0", () => {
-    console.log("BRIDGE SEFAZ ONLINE (GZIP Ativo) - Porta:", PORT);
 });
