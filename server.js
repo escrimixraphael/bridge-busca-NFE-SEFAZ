@@ -306,28 +306,26 @@ function obterEndpointEvento(chave, endpointFornecido) {
     // Extrai o código da UF dos 2 primeiros dígitos da chave de acesso
     const cUF = chave ? chave.substring(0, 2) : '41';
 
-    // Mapeamento oficial dos webservices de Recepção de Eventos v4.00 por UF
+    // Mapeamento correto e oficial dos webservices de Recepção de Eventos v4.00 para NF-e
     const endpointsUF = {
-        // Paraná (URL oficial fornecida pela SEFAZ-PR)
-        '41': ' https://mdfe.svrs.rs.gov.br/ws/MDFeRecepcaoEvento/MDFeRecepcaoEvento.asmx',
+        // Estados atendidos pela SVRS para NF-e (PR, RS, SC, RJ, ES, MS, MT, etc.)
+        '41': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
+        '43': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
+        '42': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
+        '33': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
+        '32': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
+        '50': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
+        '51': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
 
-        // São Paulo
+        // São Paulo (Webservice próprio de SP)
         '35': 'https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx',
         
-        // Minas Gerais
-        '31': 'https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4',
-
-        // Estados atendidos pela SVRS (Rio Grande do Sul / SVC-RS)
-        '43': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx', // RS
-        '42': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx', // SC
-        '33': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx', // RJ
-        '32': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx', // ES
-        '50': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx', // MS
-        '51': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx'  // MT
+        // Minas Gerais (Webservice próprio de MG)
+        '31': 'https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4'
     };
 
-    // Retorna o endpoint específico do estado ou usa o Ambiente Nacional como fallback universal
-    return endpointsUF[cUF] || "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
+    // Fallback padrão para a SVRS de NF-e
+    return endpointsUF[cUF] || "https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx";
 }                               
 
 app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
