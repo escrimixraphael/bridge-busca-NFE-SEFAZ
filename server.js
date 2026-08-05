@@ -342,14 +342,16 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
     </infEvento>
 </evento>`;
 
-    // 3. Assinatura do XML com xml-crypto
+    // 3. Assinatura do XML com xml-crypto corrigida
     const sig = new SignedXml();
-    sig.addReference(
-        "//*[local-name(.)='infEvento']",
-        ["http://www.w3.org/2000/09/xmldsig#enveloped-signature", "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"],
-        "http://www.w3.org/2000/09/xmldsig#sha1",
-        "", "", "", false
-    );
+    sig.addReference({
+        xpath: "//*[local-name(.)='infEvento']",
+        transforms: [
+            "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
+            "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
+        ],
+        digestAlgorithm: "http://www.w3.org/2000/09/xmldsig#sha1"
+    });
     sig.signingKey = privateKeyPem;
     sig.signatureAlgorithm = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
     sig.keyInfoProvider = {
@@ -373,7 +375,6 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 
     return soap;
 }
-
 // ================================
 // ROTAS DE INTEGRAÇÃO
 // ================================
