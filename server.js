@@ -306,9 +306,9 @@ function obterEndpointEvento(chave, endpointFornecido) {
     // Extrai o código da UF dos 2 primeiros dígitos da chave de acesso
     const cUF = chave ? chave.substring(0, 2) : '41';
 
-    // Mapeamento correto e oficial dos webservices de Recepção de Eventos v4.00 para NF-e
+    // Mapeamento correto e exato dos webservices de Recepção de Eventos v4.00 para NF-e
     const endpointsUF = {
-        // Estados atendidos pela SVRS para NF-e (PR, RS, SC, RJ, ES, MS, MT, etc.)
+        // Estados atendidos pela SVRS (PR, RS, SC, RJ, ES, MS, MT, etc.) com o caminho oficial exato em minúsculas
         '41': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
         '43': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
         '42': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
@@ -317,14 +317,14 @@ function obterEndpointEvento(chave, endpointFornecido) {
         '50': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
         '51': 'https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx',
 
-        // São Paulo (Webservice próprio de SP)
+        // São Paulo (Webservice próprio)
         '35': 'https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx',
         
-        // Minas Gerais (Webservice próprio de MG)
+        // Minas Gerais (Webservice próprio)
         '31': 'https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4'
     };
 
-    // Fallback padrão para a SVRS de NF-e
+    // Fallback padrão para a SVRS oficial de NF-e
     return endpointsUF[cUF] || "https://nfe.svrs.rs.gov.br/ws/recepcaoevento/recepcaoevento4.asmx";
 }                               
 
