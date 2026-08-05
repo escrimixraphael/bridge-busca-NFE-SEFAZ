@@ -228,8 +228,11 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 
     const justificativaXML = evt.tp === '210240' ? '<xJust>Operacao nao realizada pelo destinatario</xJust>' : '';
 
+    // Extrai o código da UF da chave de acesso (2 primeiros dígitos)
+    const cUF = chave ? chave.substring(0, 2) : '91';
+
     const xmlInfEvento = `<infEvento Id="${idEvento}" xmlns="http://www.portalfiscal.inf.br/nfe">` +
-        `<cOrgao>91</cOrgao>` +
+        `<cOrgao>${cUF}</cOrgao>` +
         `<tpAmb>1</tpAmb>` +
         `<CNPJ>${cnpj}</CNPJ>` +
         `<chNFe>${chave}</chNFe>` +
@@ -296,17 +299,39 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 </soap12:Envelope>`;
 }
 
+// Função para determinar o endpoint correto de Recepção de Eventos com base na UF da chave de NFe ou parâmetro manual
+function obterEndpointEvento(chave, endpointFornecido) {
+    if (endpointFornecido) return endpointFornecido;
+
+    // Se não foi fornecido, extrai a UF pelos 2 primeiros dígitos da chave de acesso da NFe
+    const cUF = chave ? chave.substring(0, 2) : '';
+
+    const endpointsUF = {
+        '41': 'https://nfe.sefa.pr.gov.br/nfe/NFeRecepcaoEvento4', // Paraná
+        '35': 'https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx', // São Paulo
+        '43': 'https://nfe.sefaz.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx', // Rio Grande do Sul (SVRS atende vários estados)
+        '31': 'https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4', // Minas Gerais
+        '33': 'https://nfe.sefaz.rj.gov.br/WS/NFeRecepcaoEvento4.asmx', // Rio de Janeiro
+        '29': 'https://nfe.sefaz.ba.gov.br/servicos/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx', // Bahia
+        '26': 'https://nfe.sefaz.pe.gov.br/nfe-service/services/NFeRecepcaoEvento4', // Pernambuco
+        '53': 'https://nfe.fazenda.df.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx' // Distrito Federal
+    };
+
+    // Se o estado tiver endpoint próprio mapeado, retorna. Caso contrário, usa o Ambiente Nacional (SVAN / AN)
+    return endpointsUF[cUF] || "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
+}
+
 app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
 // ================================
-// ROTA DE MANIFESTAÇÃO INDEPENDENTE
+// ROTA DE MANIFESTAÇÃO INDEPENDENTE (SUPORTE MULTI-UF)
 // ================================
 app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
     let finalizado = false;
     try {
-        const { pfxBase64, password, cnpj, chave, tipoManifestacao } = req.body;
+        const { pfxBase64, password, cnpj, chave, tipoManifestacao, endpoint } = req.body;
         
         if (!pfxBase64 || !password || !cnpj || !chave || !tipoManifestacao) {
             return res.status(400).json({ success: false, error: "Dados incompletos para a manifestação." });
@@ -314,8 +339,9 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
 
         const soapEnvelope = gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password);
         
-        // URL ajustada estritamente para o Ambiente Nacional de Recepção de Eventos v4.00
-        const endpointUrl = new URL("https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx");
+        // Determina dinamicamente o endpoint adequado para a UF da nota ou usa o enviado no body
+        const urlDestino = obterEndpointEvento(chave, endpoint);
+        const endpointUrl = new URL(urlDestino);
         const soapAction = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento";
 
         const certificado = Buffer.from(sanitizarBase64(pfxBase64), "base64");
@@ -324,7 +350,7 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
         const options = {
             hostname: endpointUrl.hostname,
             port: 443,
-            path: endpointUrl.pathname,
+            path: endpointUrl.pathname + endpointUrl.search,
             method: "POST",
             pfx: certificado,
             passphrase: password,
@@ -350,6 +376,7 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
                 finalizado = true;
 
                 console.log("=== RESPOSTA CRUA SEFAZ (MANIFESTAÇÃO) ===");
+                console.log("Destino:", endpointUrl.hostname);
                 console.log("Status HTTP:", sefazRes.statusCode);
                 console.log(body);
                 console.log("==========================================");
