@@ -300,11 +300,28 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 }
 
 // Função para determinar o endpoint correto de Recepção de Eventos com base na UF da chave de NFe ou parâmetro manual
-const endpoint = obterEndpointAutorizador(chave);
+function obterEndpointEvento(chave, endpointFornecido) {
+    if (endpointFornecido)
+        return endpointFornecido;
+    const ambiente = process.env.NFE_AMBIENTE === "2"
+        ? "homologacao"
+        : "producao";
+    const cUF = chave.substring(0,2);
+    const ENDPOINTS = {
+        producao: {
+            AN: "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
+            SP: "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
+            MG: "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx"
+        },
 
-return endpoint
-    .replace("NFeDistribuicaoDFe", "NFeRecepcaoEvento4")
-    .replace("NFeAutorizacao4", "NFeRecepcaoEvento4");                               
+        homologacao: {
+            AN: "https://hom.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
+            SP: "https://hom.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx",
+            MG: "https://hom.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx"
+        }
+    };
+    return ENDPOINTS[ambiente].AN;
+}                              
 
 app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
