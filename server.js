@@ -303,28 +303,19 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 function obterEndpointEvento(chave, endpointFornecido) {
     if (endpointFornecido) return endpointFornecido;
 
-    // Extrai o código da UF dos 2 primeiros dígitos da chave de acesso
     const cUF = chave ? chave.substring(0, 2) : '41';
 
-    // Mapeamento correto e oficial com a extensão .asmx exigida pelo webservice da SVRS
-    const endpointsUF = {
-        // Estados atendidos pela SVRS (PR, RS, SC, RJ, ES, MS, MT, etc.)
-        '41': 'https://nfe.svrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
-        '43': 'https://nfe.svrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
-        '42': 'https://nfe.svrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
-        '33': 'https://nfe.svrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
-        '32': 'https://nfe.svrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
-        '50': 'https://nfe.svrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
-        '51': 'https://nfe.svrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx',
+    // Se for Paraná ou estados da SVRS, utilizamos o endpoint oficial de eventos da SVRS sem sufixo de arquivo estático
+    const svrsUfs = ['41', '43', '42', '33', '32', '50', '51', '15', '27', '25', '22', '11', '14', '28', '17', '16', '12'];
+    
+    if (svrsUfs.includes(cUF)) {
+        return "https://nfe.svrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4";
+    }
 
-        // São Paulo
-        '35': 'https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx',
-        
-        // Minas Gerais
-        '31': 'https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4'
-    };
+    if (cUF === '35') return "https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx";
+    if (cUF === '31') return "https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4";
 
-    return endpointsUF[cUF] || "https://nfe.svrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
+    return "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
 }                               
 
 app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
