@@ -306,24 +306,27 @@ function obterEndpointEvento(chave, endpointFornecido) {
     // Extrai o código da UF dos 2 primeiros dígitos da chave de acesso
     const cUF = chave ? chave.substring(0, 2) : '41';
 
-    // Mapeamento correto e exato dos webservices de Recepção de Eventos v4.00
+    // Mapeamento oficial dos webservices de Recepção de Eventos v4.00 por UF
     const endpointsUF = {
-        // Estados atendidos pela SVRS (Sefaz Virtual Rio Grande do Sul): PR, SC, RS, RJ, ES, MS, MT, PA, AL, PB, PI, RO, RR, SE, TO, AP, AC
-        '41': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
-        '43': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
-        '42': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
-        '33': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
-        '32': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
-        '50': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
-        '51': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx',
-        
+        // Paraná (URL oficial fornecida pela SEFAZ-PR)
+        '41': 'https://nfe.sefa.pr.gov.br/nfe/NFeRecepcaoEvento4',
+
         // São Paulo
         '35': 'https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx',
         
         // Minas Gerais
-        '31': 'https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4'
+        '31': 'https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4',
+
+        // Estados atendidos pela SVRS (Rio Grande do Sul / SVC-RS)
+        '43': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx', // RS
+        '42': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx', // SC
+        '33': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx', // RJ
+        '32': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx', // ES
+        '50': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx', // MS
+        '51': 'https://nfe.sefazrs.rs.gov.br/ws/NFeRecepcaoEvento4/nfeRecepcaoEvento4.asmx'  // MT
     };
 
+    // Retorna o endpoint específico do estado ou usa o Ambiente Nacional como fallback universal
     return endpointsUF[cUF] || "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
 }                               
 
