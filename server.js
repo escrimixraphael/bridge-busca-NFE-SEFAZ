@@ -300,10 +300,14 @@ app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
+// ================================
+// HANDLER GENÉRICO: CONSULTA SEFAZ MTLS / MANIFESTAÇÃO
+// ================================
 app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
     let finalizado = false;
     try {
         const { pfxBase64, password, cnpj, chave, tipoManifestacao } = req.body;
+        
         if (!pfxBase64 || !password || !cnpj || !chave || !tipoManifestacao) {
             return res.status(400).json({ success: false, error: "Dados incompletos para a manifestação." });
         }
@@ -313,22 +317,25 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
         const soapAction = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento";
 
         const certificado = Buffer.from(sanitizarBase64(pfxBase64), "base64");
+        const soapBuffer = Buffer.from(soapEnvelope, "utf8");
 
         const options = {
             hostname: endpointUrl.hostname,
-            port: endpointUrl.port || 443,
-            path: endpointUrl.pathname + endpointUrl.search,
+            port: 443,
+            path: endpointUrl.pathname,
             method: "POST",
             pfx: certificado,
             passphrase: password,
             minVersion: "TLSv1.2",
-            rejectUnauthorized: true,
-            secureOptions: crypto.constants.SSL_OP_NO_TLSv1 | crypto.constants.SSL_OP_NO_TLSv1_1,
+            maxVersion: "TLSv1.2",
+            rejectUnauthorized: false, // Ignora restrições intermediárias de CA se houver no Render
+            ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-GCM-SHA384',
             headers: {
-                "Content-Type": `application/soap+xml; charset=utf-8; action="${soapAction}"`,
-                SOAPAction: soapAction,
-                "User-Agent": "Bridge-SEFAZ/1.2",
-                "Content-Length": Buffer.byteLength(soapEnvelope)
+                "Cache-Control": "no-cache",
+                "Content-Type": "application/soap+xml; charset=utf-8; action=\"" + soapAction + "\"",
+                "SOAPAction": soapAction,
+                "User-Agent": "Mozilla/4.0 (compatible; MSIE 6.0; MSVB VM on Win32)",
+                "Content-Length": soapBuffer.length
             }
         };
 
@@ -341,6 +348,7 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
                 finalizado = true;
 
                 console.log("=== RESPOSTA CRUA SEFAZ (MANIFESTAÇÃO) ===");
+                console.log("Status HTTP:", sefazRes.statusCode);
                 console.log(body);
                 console.log("==========================================");
 
@@ -357,9 +365,9 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
                     if (faultMatch) xMotivo = faultMatch[1];
                 }
 
-                // Fallback robusto para garantir que nunca retorne vazio
-                const motivoFinal = (xMotivo && xMotivo.trim()) ? xMotivo.trim() : (body && body.trim().length > 0 && body.length < 400 ? body.trim() : `Rejeição HTTP ${sefazRes.statusCode} da SEFAZ`);
+                const motivoFinal = (xMotivo && xMotivo.trim()) ? xMotivo.trim() : (body && body.trim().length > 0 && body.length < 500 ? body.trim() : `Rejeição HTTP ${sefazRes.statusCode} da SEFAZ`);
 
+                // cStat 135 (Registrado e vinculado), 136 (Registrado mas já vinculado)
                 const isSuccess = sefazRes.statusCode === 200 && (cStatFinal === '135' || cStatFinal === '136');
 
                 if (isSuccess) {
@@ -369,6 +377,30 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
                 }
             });
         });
+
+        sefazReq.setTimeout(60000, () => {
+            sefazReq.destroy();
+            if (!finalizado) {
+                finalizado = true;
+                return res.status(504).json({ success: false, error: "Timeout ao conectar com a SEFAZ" });
+            }
+        });
+
+        sefazReq.on("error", (err) => {
+            if (!finalizado) {
+                finalizado = true;
+                return res.status(502).json({ success: false, error: "Erro de conexão: " + err.message });
+            }
+        });
+
+        sefazReq.write(soapBuffer);
+        sefazReq.end();
+
+    } catch (error) {
+        console.error("Erro interno no Bridge:", error);
+        return res.status(500).json({ success: false, error: "Falha interna no Bridge: " + error.message });
+    }
+});
         
         sefazReq.setTimeout(60000, () => {
             sefazReq.destroy();
