@@ -340,21 +340,26 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
                 if (finalizado) return;
                 finalizado = true;
 
+                console.log("=== RESPOSTA CRUA SEFAZ (MANIFESTAÇÃO) ===");
+                console.log(body);
+                console.log("==========================================");
+
                 const cStatMatch = body.match(/<cStat[^>]*>(.*?)<\/cStat>/g);
                 const cStatLote = cStatMatch && cStatMatch.length > 0 ? cStatMatch[0].replace(/<\/?cStat[^>]*>/g, '') : '';
                 const cStatEvento = cStatMatch && cStatMatch.length > 1 ? cStatMatch[1].replace(/<\/?cStat[^>]*>/g, '') : '';
                 const cStatFinal = cStatEvento || cStatLote;
 
                 const xMotivoMatch = body.match(/<xMotivo[^>]*>(.*?)<\/xMotivo>/g);
-                const xMotivo = xMotivoMatch && xMotivoMatch.length > 0 ? xMotivoMatch[xMotivoMatch.length - 1].replace(/<\/?xMotivo[^>]*>/g, '') : null;
+                let xMotivo = xMotivoMatch && xMotivoMatch.length > 0 ? xMotivoMatch[xMotivoMatch.length - 1].replace(/<\/?xMotivo[^>]*>/g, '') : null;
 
-                let faultString = '';
                 if (!xMotivo) {
                     const faultMatch = body.match(/<faultstring[^>]*>(.*?)<\/faultstring>/i) || body.match(/<reason[^>]*>(.*?)<\/reason>/i);
-                    if (faultMatch) faultString = faultMatch[1];
+                    if (faultMatch) xMotivo = faultMatch[1];
                 }
 
-                const motivoFinal = xMotivo || faultString || (body.length < 300 ? body : 'Resposta incompatível da SEFAZ');
+                // Fallback robusto para garantir que nunca retorne vazio
+                const motivoFinal = (xMotivo && xMotivo.trim()) ? xMotivo.trim() : (body && body.trim().length > 0 && body.length < 400 ? body.trim() : `Rejeição HTTP ${sefazRes.statusCode} da SEFAZ`);
+
                 const isSuccess = sefazRes.statusCode === 200 && (cStatFinal === '135' || cStatFinal === '136');
 
                 if (isSuccess) {
@@ -364,7 +369,7 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
                 }
             });
         });
-
+        
         sefazReq.setTimeout(60000, () => {
             sefazReq.destroy();
             if (!finalizado) {
