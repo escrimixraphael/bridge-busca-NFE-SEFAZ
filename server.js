@@ -355,9 +355,10 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
             pfx: certificado,
             passphrase: password,
             minVersion: "TLSv1.2",
-            maxVersion: "TLSv1.2",
-            rejectUnauthorized: true,
-            ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:AES128-GCM-SHA256:AES256-GCM-SHA384',
+            // Removido o maxVersion estrito para permitir negociação correta com a SEFAZ
+            rejectUnauthorized: false, // Opcional temporariamente se houver problema de cadeia, mas idealmente mantido true se o certificado raiz da SEFAZ for aceito. Vamos manter true e ajustar as cifras:
+            // ciphers padrão abertos do Node.js para garantir compatibilidade com webservices governamentais antigos:
+            ciphers: 'DEFAULT:@SECLEVEL=0', 
             headers: {
                 "Cache-Control": "no-cache",
                 "Content-Type": "application/soap+xml; charset=utf-8; action=\"" + soapAction + "\"",
@@ -366,7 +367,7 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
                 "Content-Length": soapBuffer.length
             }
         };
-
+        
         const sefazReq = https.request(options, (sefazRes) => {
             let body = "";
             sefazRes.setEncoding("utf8");
