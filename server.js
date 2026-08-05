@@ -408,7 +408,38 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
             isManifest: true // Flag para alterar a tratativa da resposta (cStat)
         };
 
-        return consultarSefaz(req, res, customPayload);
+        // Sobrescrevemos temporariamente o tratamento da resposta dentro do encadeamento para pegar o xMotivo
+        const resModificado = {
+            ...res,
+            status: function(code) {
+                this._statusCode = code;
+                return this;
+            },
+            json: function(obj) {
+                if (obj && obj.soapResponse && obj.isManifest !== false) {
+                    const body = obj.soapResponse;
+                    const cStatMatch = body.match(/<cStat[^>]*>(.*?)<\/cStat>/g);
+                    const cStatLote = cStatMatch && cStatMatch.length > 0 ? cStatMatch[0].replace(/<\/?cStat[^>]*>/g, '') : '';
+                    const cStatEvento = cStatMatch && cStatMatch.length > 1 ? cStatMatch[1].replace(/<\/?cStat[^>]*>/g, '') : '';
+                    
+                    const xMotivoMatch = body.match(/<xMotivo[^>]*>(.*?)<\/xMotivo>/g);
+                    const xMotivo = xMotivoMatch && xMotivoMatch.length > 0 ? xMotivoMatch[xMotivoMatch.length - 1].replace(/<\/?xMotivo[^>]*>/g, '') : 'Rejeitado pela SEFAZ';
+
+                    const finalStatus = obj.success ? 200 : 400;
+                    const msgFormatada = obj.success ? "Manifestação registrada com sucesso" : `SEFAZ (${cStatEvento || cStatLote}): ${xMotivo}`;
+
+                    return res.status(finalStatus).json({
+                        success: obj.success,
+                        error: obj.success ? null : msgFormatada,
+                        message: msgFormatada,
+                        cStat: cStatEvento || cStatLote
+                    });
+                }
+                return res.status(this._statusCode || 200).json(obj);
+            }
+        };
+
+        return consultarSefaz(req, resModificado, customPayload);
 
     } catch (error) {
         console.error("Erro na manifestação:", error);
