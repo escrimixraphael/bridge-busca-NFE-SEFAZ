@@ -300,23 +300,11 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 }
 
 // Função para determinar o endpoint correto de Recepção de Eventos com base na UF da chave de NFe ou parâmetro manual
-function obterEndpointEvento(chave, endpointFornecido) {
-    if (endpointFornecido) return endpointFornecido;
+const endpoint = obterEndpointAutorizador(chave);
 
-    const cUF = chave ? chave.substring(0, 2) : '41';
-
-    // Se for Paraná ou estados da SVRS, utilizamos o endpoint oficial de eventos da SVRS sem sufixo de arquivo estático
-    const svrsUfs = ['41', '43', '42', '33', '32', '50', '51', '15', '27', '25', '22', '11', '14', '28', '17', '16', '12'];
-    
-    if (svrsUfs.includes(cUF)) {
-        return "https://nfe.svrs.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4";
-    }
-
-    if (cUF === '35') return "https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx";
-    if (cUF === '31') return "https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4";
-
-    return "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
-}                               
+return endpoint
+    .replace("NFeDistribuicaoDFe", "NFeRecepcaoEvento4")
+    .replace("NFeAutorizacao4", "NFeRecepcaoEvento4");                               
 
 app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
