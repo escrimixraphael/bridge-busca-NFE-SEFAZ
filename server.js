@@ -303,23 +303,10 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 function obterEndpointEvento(chave, endpointFornecido) {
     if (endpointFornecido) return endpointFornecido;
 
-    // Se não foi fornecido, extrai a UF pelos 2 primeiros dígitos da chave de acesso da NFe
-    const cUF = chave ? chave.substring(0, 2) : '';
-
-    const endpointsUF = {
-        '41': 'https://nfe.sefa.pr.gov.br/nfe/NFeRecepcaoEvento4', // Paraná
-        '35': 'https://nfe.fazenda.sp.gov.br/ws/nferecepcaoevento4.asmx', // São Paulo
-        '43': 'https://nfe.sefaz.rs.gov.br/ws/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx', // Rio Grande do Sul (SVRS atende vários estados)
-        '31': 'https://nfe.fazenda.mg.gov.br/nfe2/services/NFeRecepcaoEvento4', // Minas Gerais
-        '33': 'https://nfe.sefaz.rj.gov.br/WS/NFeRecepcaoEvento4.asmx', // Rio de Janeiro
-        '29': 'https://nfe.sefaz.ba.gov.br/servicos/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx', // Bahia
-        '26': 'https://nfe.sefaz.pe.gov.br/nfe-service/services/NFeRecepcaoEvento4', // Pernambuco
-        '53': 'https://nfe.fazenda.df.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx' // Distrito Federal
-    };
-
-    // Se o estado tiver endpoint próprio mapeado, retorna. Caso contrário, usa o Ambiente Nacional (SVAN / AN)
-    return endpointsUF[cUF] || "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
-}
+    // Para eventos de Manifestação do Destinatário (NF-e), o Ambiente Nacional (AN) 
+    // é o padrão universal oficial unificado para processamento de eventos de terceiros.
+    return "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
+}                               
 
 app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
