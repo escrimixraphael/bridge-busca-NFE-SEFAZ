@@ -325,9 +325,7 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
 
     const justificativaXML = evt.tp === '210240' ? '<xJust>Operacao nao realizada pelo destinatario</xJust>' : '';
 
-    // O XML base do evento a ser assinado contém a tag <evento> envolvendo o <infEvento>
-    const xmlNaoAssinado = `<evento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00">` +
-        `<infEvento Id="${idEvento}">` +
+    const xmlNaoAssinado = `<infEvento Id="${idEvento}" xmlns="http://www.portalfiscal.inf.br/nfe">` +
         `<cOrgao>91</cOrgao>` +
         `<tpAmb>1</tpAmb>` +
         `<CNPJ>${cnpj}</CNPJ>` +
@@ -340,15 +338,14 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
         `<descEvento>${evt.desc}</descEvento>` +
         justificativaXML +
         `</detEvento>` +
-        `</infEvento>` +
-        `</evento>`;
+        `</infEvento>`;
 
-    // 3. Assinatura do XML com xml-crypto apontando para o infEvento
+    // 3. Assinatura do XML com xml-crypto ajustada com namespace explícito
     const sig = new SignedXml();
     sig.canonicalizationAlgorithm = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
     sig.signatureAlgorithm = "http://www.w3.org/2000/09/xmldsig#rsa-sha1";
     sig.addReference({
-        xpath: "//*[local-name(.)='infEvento']",
+        xpath: "//*[@Id='" + idEvento + "']",
         transforms: [
             "http://www.w3.org/2000/09/xmldsig#enveloped-signature",
             "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
@@ -361,16 +358,22 @@ function gerarManifestacaoXML(cnpj, chave, tipoManifestacao, pfxBase64, password
         getKeyInfo: () => `<X509Data><X509Certificate>${certB64}</X509Certificate></X509Data>`
     };
     sig.computeSignature(xmlNaoAssinado);
-    const xmlAssinado = sig.getSignedXml();
+    
+    // Força a inserção correta do namespace da assinatura exigido pelo XSD da SEFAZ
+    let xmlAssinado = sig.getSignedXml();
+    xmlAssinado = xmlAssinado.replace('<Signature>', '<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">');
 
-    // 4. Encapsulamento correto no Envelope SOAP exigido pela Sefaz
+    // 4. Encapsulamento final conforme layout oficial do envEvento / evento
     const soap = `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
     <soap12:Body>
         <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">
             <envEvento versao="1.00" xmlns="http://www.portalfiscal.inf.br/nfe">
                 <idLote>1</idLote>
-                ${xmlAssinado}
+                <evento versao="1.00">
+                    ${xmlNaoAssinado}
+                    ${xmlAssinado}
+                </evento>
             </envEvento>
         </nfeDadosMsg>
     </soap12:Body>
