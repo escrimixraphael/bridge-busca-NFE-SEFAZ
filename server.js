@@ -497,801 +497,527 @@ app.post(
     (req, res) => consultarSefaz(req, res)
 );
 
-/* ============================================================
-   GERAÇÃO DO DANFE EM PDF
-============================================================ */
-
-function obterDadosNFe(xml) {
-    const blocoNFe = extrairBlocoXml(xml, "infNFe") || xml;
-    const blocoIde = extrairBlocoXml(blocoNFe, "ide");
-    const blocoEmit = extrairBlocoXml(blocoNFe, "emit");
-    const blocoDest = extrairBlocoXml(blocoNFe, "dest");
-    const blocoTotal = extrairBlocoXml(blocoNFe, "ICMSTot");
-    const blocoTransp = extrairBlocoXml(blocoNFe, "transp");
-    const blocoInfAdic = extrairBlocoXml(blocoNFe, "infAdic");
-
-    const idNFe =
-        blocoNFe.match(/\bId\s*=\s*["']([^"']+)["']/i)?.[1] || "";
-
-    const chave =
-        extrairTagXml(xml, "chNFe") ||
-        idNFe.replace(/^NFe/i, "") ||
-        "";
-
-    const produtos = extrairTodosBlocosXml(blocoNFe, "det").map((blocoDet) => {
-        const blocoProd = extrairBlocoXml(blocoDet, "prod");
-
-        return {
-            numero: blocoDet.match(/\bnItem\s*=\s*["']([^"']+)["']/i)?.[1] || "",
-            codigo: extrairTagXml(blocoProd, "cProd"),
-            descricao: extrairTagXml(blocoProd, "xProd"),
-            ncm: extrairTagXml(blocoProd, "NCM"),
-            cfop: extrairTagXml(blocoProd, "CFOP"),
-            unidade: extrairTagXml(blocoProd, "uCom"),
-            quantidade: extrairTagXml(blocoProd, "qCom"),
-            valorUnitario: extrairTagXml(blocoProd, "vUnCom"),
-            valorTotal: extrairTagXml(blocoProd, "vProd"),
-            cest: extrairTagXml(blocoProd, "CEST")
-        };
-    });
-
-    const chaveNumerica = somenteDigitos(chave);
-
-    return {
-        chave: chaveNumerica || chave || "NÃO INFORMADA",
-        protocolo:
-            extrairTagXml(xml, "nProt") ||
-            extrairTagXml(xml, "nRec") ||
-            "",
-        emitente: {
-            cnpj:
-                extrairTagXml(blocoEmit, "CNPJ") ||
-                extrairTagXml(blocoEmit, "CPF"),
-            nome: extrairTagXml(blocoEmit, "xNome"),
-            fantasia: extrairTagXml(blocoEmit, "xFant"),
-            ie: extrairTagXml(blocoEmit, "IE"),
-            logradouro: extrairTagXml(blocoEmit, "xLgr"),
-            numero: extrairTagXml(blocoEmit, "nro"),
-            complemento: extrairTagXml(blocoEmit, "xCpl"),
-            bairro: extrairTagXml(blocoEmit, "xBairro"),
-            municipio: extrairTagXml(blocoEmit, "xMun"),
-            uf: extrairTagXml(blocoEmit, "UF"),
-            cep: extrairTagXml(blocoEmit, "CEP"),
-            telefone: extrairTagXml(blocoEmit, "fone")
-        },
-        destinatario: {
-            cnpj:
-                extrairTagXml(blocoDest, "CNPJ") ||
-                extrairTagXml(blocoDest, "CPF"),
-            nome: extrairTagXml(blocoDest, "xNome"),
-            ie: extrairTagXml(blocoDest, "IE"),
-            logradouro: extrairTagXml(blocoDest, "xLgr"),
-            numero: extrairTagXml(blocoDest, "nro"),
-            complemento: extrairTagXml(blocoDest, "xCpl"),
-            bairro: extrairTagXml(blocoDest, "xBairro"),
-            municipio: extrairTagXml(blocoDest, "xMun"),
-            uf: extrairTagXml(blocoDest, "UF"),
-            cep: extrairTagXml(blocoDest, "CEP"),
-            telefone: extrairTagXml(blocoDest, "fone")
-        },
-        identificacao: {
-            numero: extrairTagXml(blocoIde, "nNF"),
-            serie: extrairTagXml(blocoIde, "serie"),
-            modelo: extrairTagXml(blocoIde, "mod"),
-            natureza: extrairTagXml(blocoIde, "natOp"),
-            emissao:
-                extrairTagXml(blocoIde, "dhEmi") ||
-                extrairTagXml(blocoIde, "dEmi"),
-            entradaSaida:
-                extrairTagXml(blocoIde, "dhSaiEnt") ||
-                extrairTagXml(blocoIde, "dSaiEnt")
-        },
-        totais: {
-            produtos: extrairTagXml(blocoTotal, "vProd"),
-            frete: extrairTagXml(blocoTotal, "vFrete"),
-            seguro: extrairTagXml(blocoTotal, "vSeg"),
-            desconto: extrairTagXml(blocoTotal, "vDesc"),
-            outras: extrairTagXml(blocoTotal, "vOutro"),
-            icms: extrairTagXml(blocoTotal, "vICMS"),
-            ipi: extrairTagXml(blocoTotal, "vIPI"),
-            pis: extrairTagXml(blocoTotal, "vPIS"),
-            cofins: extrairTagXml(blocoTotal, "vCOFINS"),
-            valorNota: extrairTagXml(blocoTotal, "vNF")
-        },
-        transporte: {
-            modalidade: extrairTagXml(blocoTransp, "modFrete"),
-            nome: extrairTagXml(blocoTransp, "xNome"),
-            cnpj: extrairTagXml(blocoTransp, "CNPJ"),
-            placa: extrairTagXml(blocoTransp, "placa"),
-            uf: extrairTagXml(blocoTransp, "UF"),
-            quantidade: extrairTagXml(blocoTransp, "qVol"),
-            especie: extrairTagXml(blocoTransp, "esp"),
-            pesoBruto: extrairTagXml(blocoTransp, "pesoB"),
-            pesoLiquido: extrairTagXml(blocoTransp, "pesoL")
-        },
-        informacoesAdicionais:
-            extrairTagXml(blocoInfAdic, "infCpl") ||
-            extrairTagXml(blocoInfAdic, "infAdFisco"),
-        produtos
-    };
-}
-
-function desenharCaixa(doc, x, y, largura, altura, titulo, valor = "") {
-    doc.rect(x, y, largura, altura).stroke();
-
-    if (titulo) {
-        doc.font("Helvetica-Bold")
-            .fontSize(6)
-            .fillColor("#333333")
-            .text(titulo.toUpperCase(), x + 4, y + 3, {
-                width: largura - 8,
-                lineBreak: false
-            });
-    }
-
-    if (valor) {
-        doc.font("Helvetica")
-            .fontSize(8)
-            .fillColor("#000000")
-            .text(String(valor), x + 4, y + 14, {
-                width: largura - 8,
-                height: altura - 15,
-                ellipsis: true
-            });
-    }
-
-    return y + altura;
-}
-
-function desenharCabecalhoDanfe(doc, dados) {
-    const margem = 32;
-    const larguraPagina = 595;
-    const larguraUtil = larguraPagina - margem * 2;
-    const yInicial = 30;
-
-    doc.lineWidth(0.7);
-    doc.fillColor("#000000");
-
-    doc.rect(margem, yInicial, 190, 82).stroke();
-
-    doc.font("Helvetica-Bold")
-        .fontSize(14)
-        .text("DANFE", margem + 8, yInicial + 10);
-
-    doc.font("Helvetica")
-        .fontSize(7)
-        .text("Documento Auxiliar da Nota Fiscal Eletrônica", margem + 8, yInicial + 31, {
-            width: 174
-        });
-
-    doc.font("Helvetica-Bold")
-        .fontSize(8)
-        .text(`NF-e nº ${dados.identificacao.numero || "N/D"}`, margem + 8, yInicial + 53);
-
-    doc.font("Helvetica")
-        .fontSize(7)
-        .text(`Série: ${dados.identificacao.serie || "N/D"}`, margem + 8, yInicial + 66);
-
-    doc.rect(margem + 190, yInicial, larguraUtil - 190, 82).stroke();
-
-    doc.font("Helvetica-Bold")
-        .fontSize(9)
-        .text("IDENTIFICAÇÃO DA NOTA FISCAL", margem + 198, yInicial + 8);
-
-    doc.font("Helvetica")
-        .fontSize(7)
-        .text(
-            `Modelo: ${dados.identificacao.modelo || "55"}   Série: ${
-                dados.identificacao.serie || "N/D"
-            }`,
-            margem + 198,
-            yInicial + 25
-        );
-
-    doc.text(
-        `Número: ${dados.identificacao.numero || "N/D"}`,
-        margem + 198,
-        yInicial + 39
-    );
-
-    doc.text(
-        `Emissão: ${formatarData(dados.identificacao.emissao) || "N/D"}`,
-        margem + 198,
-        yInicial + 53
-    );
-
-    doc.text(
-        `Protocolo: ${dados.protocolo || "NÃO INFORMADO"}`,
-        margem + 198,
-        yInicial + 67
-    );
-
-    let y = yInicial + 94;
-
-    doc.font("Helvetica-Bold")
-        .fontSize(7)
-        .text("CHAVE DE ACESSO", margem, y);
-
-    y += 12;
-
-    doc.rect(margem, y, larguraUtil, 31).stroke();
-
-    doc.font("Helvetica-Bold")
-        .fontSize(10)
-        .text(
-            dados.chave.replace(/(.{4})/g, "$1 ").trim(),
-            margem + 8,
-            y + 10,
-            {
-                width: larguraUtil - 16,
-                align: "center",
-                characterSpacing: 0.8
-            }
-        );
-
-    y += 43;
-
-    doc.font("Helvetica")
-        .fontSize(7)
-        .text(
-            "Consulta de autenticidade no portal nacional da NF-e",
-            margem,
-            y
-        );
-
-    return y + 18;
-}
-
-function desenharEmitente(doc, dados, y) {
-    const margem = 32;
-    const largura = 531;
-    const altura = 82;
-
-    doc.font("Helvetica-Bold")
-        .fontSize(8)
-        .text("EMITENTE", margem, y);
-
-    y += 12;
-
-    doc.rect(margem, y, largura, altura).stroke();
-
-    doc.font("Helvetica-Bold")
-        .fontSize(9)
-        .text(
-            dados.emitente.nome || "NOME DO EMITENTE NÃO INFORMADO",
-            margem + 7,
-            y + 7,
-            {
-                width: 330
-            }
-        );
-
-    doc.font("Helvetica")
-        .fontSize(7)
-        .text(
-            dados.emitente.fantasia
-                ? `Nome fantasia: ${dados.emitente.fantasia}`
-                : "",
-            margem + 7,
-            y + 22,
-            {
-                width: 330
-            }
-        );
-
-    doc.text(
-        `CNPJ/CPF: ${dados.emitente.cnpj || "N/D"}`,
-        margem + 7,
-        y + 38
-    );
-
-    doc.text(
-        `IE: ${dados.emitente.ie || "N/D"}`,
-        margem + 7,
-        y + 52
-    );
-
-    const endereco = [
-        dados.emitente.logradouro,
-        dados.emitente.numero,
-        dados.emitente.complemento,
-        dados.emitente.bairro,
-        dados.emitente.municipio,
-        dados.emitente.uf
-    ]
-        .filter(Boolean)
-        .join(", ");
-
-    doc.text(quebrarTexto(endereco, 70), margem + 220, y + 8, {
-        width: 300,
-        height: 38
-    });
-
-    doc.text(
-        `CEP: ${dados.emitente.cep || "N/D"}  Tel.: ${
-            dados.emitente.telefone || "N/D"
-        }`,
-        margem + 220,
-        y + 53,
-        {
-            width: 300
-        }
-    );
-
-    return y + altura + 16;
-}
-
-function desenharDestinatario(doc, dados, y) {
-    const margem = 32;
-    const largura = 531;
-    const altura = 82;
-
-    doc.font("Helvetica-Bold")
-        .fontSize(8)
-        .text("DESTINATÁRIO / REMETENTE", margem, y);
-
-    y += 12;
-
-    doc.rect(margem, y, largura, altura).stroke();
-
-    doc.font("Helvetica-Bold")
-        .fontSize(9)
-        .text(
-            dados.destinatario.nome || "DESTINATÁRIO NÃO INFORMADO",
-            margem + 7,
-            y + 7,
-            {
-                width: 330
-            }
-        );
-
-    doc.font("Helvetica")
-        .fontSize(7)
-        .text(
-            `CNPJ/CPF: ${dados.destinatario.cnpj || "N/D"}`,
-            margem + 7,
-            y + 25
-        );
-
-    doc.text(
-        `IE: ${dados.destinatario.ie || "N/D"}`,
-        margem + 7,
-        y + 40
-    );
-
-    const endereco = [
-        dados.destinatario.logradouro,
-        dados.destinatario.numero,
-        dados.destinatario.complemento,
-        dados.destinatario.bairro,
-        dados.destinatario.municipio,
-        dados.destinatario.uf
-    ]
-        .filter(Boolean)
-        .join(", ");
-
-    doc.text(quebrarTexto(endereco, 70), margem + 220, y + 8, {
-        width: 300,
-        height: 38
-    });
-
-    doc.text(
-        `CEP: ${dados.destinatario.cep || "N/D"}  Tel.: ${
-            dados.destinatario.telefone || "N/D"
-        }`,
-        margem + 220,
-        y + 53,
-        {
-            width: 300
-        }
-    );
-
-    return y + altura + 16;
-}
-
-function desenharTabelaProdutos(doc, produtos, y) {
-    const margem = 32;
-    const largura = 531;
-    const alturaCabecalho = 22;
-    const alturaLinha = 35;
-
-    doc.font("Helvetica-Bold")
-        .fontSize(8)
-        .text("DADOS DOS PRODUTOS / SERVIÇOS", margem, y);
-
-    y += 12;
-
-    const colunas = [
-        { titulo: "ITEM", x: margem, largura: 32 },
-        { titulo: "CÓDIGO", x: margem + 32, largura: 58 },
-        { titulo: "DESCRIÇÃO", x: margem + 90, largura: 185 },
-        { titulo: "NCM", x: margem + 275, largura: 48 },
-        { titulo: "CFOP", x: margem + 323, largura: 40 },
-        { titulo: "QTD.", x: margem + 363, largura: 42 },
-        { titulo: "V. UNIT.", x: margem + 405, largura: 60 },
-        { titulo: "V. TOTAL", x: margem + 465, largura: 66 }
-    ];
-
-    doc.rect(margem, y, largura, alturaCabecalho).stroke();
-
-    doc.font("Helvetica-Bold").fontSize(6);
-
-    for (const coluna of colunas) {
-        doc.text(coluna.titulo, coluna.x + 2, y + 7, {
-            width: coluna.largura - 4,
-            align: "center"
-        });
-
-        doc
-            .moveTo(coluna.x, y)
-            .lineTo(coluna.x, y + alturaCabecalho)
-            .stroke();
-    }
-
-    doc.moveTo(margem + largura, y)
-        .lineTo(margem + largura, y + alturaCabecalho)
-        .stroke();
-
-    y += alturaCabecalho;
-
-    if (!produtos.length) {
-        doc.rect(margem, y, largura, alturaLinha).stroke();
-        doc.font("Helvetica")
-            .fontSize(7)
-            .text("Nenhum item encontrado no XML.", margem + 5, y + 13);
-        return y + alturaLinha;
-    }
-
-    for (const produto of produtos) {
-        if (y > 700) {
-            doc.addPage();
-            y = 35;
-
-            doc.font("Helvetica-Bold")
-                .fontSize(8)
-                .text("DADOS DOS PRODUTOS / SERVIÇOS - CONTINUAÇÃO", margem, y);
-
-            y += 12;
-        }
-
-        doc.rect(margem, y, largura, alturaLinha).stroke();
-
-        for (const coluna of colunas) {
-            doc
-                .moveTo(coluna.x, y)
-                .lineTo(coluna.x, y + alturaLinha)
-                .stroke();
-        }
-
-        const valores = [
-            produto.numero,
-            produto.codigo,
-            produto.descricao,
-            produto.ncm,
-            produto.cfop,
-            produto.quantidade
-                ? formatarNumero(produto.quantidade, 3)
-                : "",
-            produto.valorUnitario
-                ? formatarMoeda(produto.valorUnitario)
-                : "",
-            produto.valorTotal
-                ? formatarMoeda(produto.valorTotal)
-                : ""
-        ];
-
-        doc.font("Helvetica").fontSize(6);
-
-        valores.forEach((valor, index) => {
-            const coluna = colunas[index];
-
-            doc.text(String(valor || ""), coluna.x + 2, y + 8, {
-                width: coluna.largura - 4,
-                height: alturaLinha - 10,
-                align: index === 2 ? "left" : "center",
-                ellipsis: true
-            });
-        });
-
-        y += alturaLinha;
-    }
-
-    return y;
-}
-
-function desenharTotais(doc, dados, y) {
-    const margem = 32;
-    const largura = 531;
-    const altura = 96;
-
-    if (y > 665) {
-        doc.addPage();
-        y = 35;
-    }
-
-    doc.font("Helvetica-Bold")
-        .fontSize(8)
-        .text("CÁLCULO DO IMPOSTO", margem, y);
-
-    y += 12;
-
-    doc.rect(margem, y, largura, altura).stroke();
-
-    const totais = [
-        ["Valor dos produtos", formatarMoeda(dados.totais.produtos)],
-        ["Frete", formatarMoeda(dados.totais.frete)],
-        ["Seguro", formatarMoeda(dados.totais.seguro)],
-        ["Desconto", formatarMoeda(dados.totais.desconto)],
-        ["ICMS", formatarMoeda(dados.totais.icms)],
-        ["IPI", formatarMoeda(dados.totais.ipi)],
-        ["PIS", formatarMoeda(dados.totais.pis)],
-        ["COFINS", formatarMoeda(dados.totais.cofins)]
-    ];
-
-    const larguraColuna = largura / 4;
-
-    totais.forEach(([titulo, valor], index) => {
-        const coluna = index % 4;
-        const linha = Math.floor(index / 4);
-        const x = margem + coluna * larguraColuna;
-        const linhaY = y + linha * 45;
-
-        doc.rect(x, linhaY, larguraColuna, 45).stroke();
-
-        doc.font("Helvetica-Bold")
-            .fontSize(6)
-            .text(titulo.toUpperCase(), x + 4, linhaY + 6, {
-                width: larguraColuna - 8,
-                align: "center"
-            });
-
-        doc.font("Helvetica")
-            .fontSize(8)
-            .text(valor, x + 4, linhaY + 22, {
-                width: larguraColuna - 8,
-                align: "center"
-            });
-    });
-
-    doc.font("Helvetica-Bold")
-        .fontSize(9)
-        .text(
-            `VALOR TOTAL DA NOTA: ${formatarMoeda(dados.totais.valorNota)}`,
-            margem + 7,
-            y + 76
-        );
-
-    return y + altura + 16;
-}
-
-function desenharTransporte(doc, dados, y) {
-    const margem = 32;
-    const largura = 531;
-    const altura = 72;
-
-    if (y > 700) {
-        doc.addPage();
-        y = 35;
-    }
-
-    doc.font("Helvetica-Bold")
-        .fontSize(8)
-        .text("TRANSPORTADOR / VOLUMES TRANSPORTADOS", margem, y);
-
-    y += 12;
-
-    doc.rect(margem, y, largura, altura).stroke();
-
-    doc.font("Helvetica")
-        .fontSize(7)
-        .text(
-            `Transportadora: ${dados.transporte.nome || "NÃO INFORMADA"}`,
-            margem + 7,
-            y + 8,
-            {
-                width: 360
-            }
-        );
-
-    doc.text(
-        `CNPJ: ${dados.transporte.cnpj || "N/D"}`,
-        margem + 7,
-        y + 24
-    );
-
-    doc.text(
-        `Modalidade frete: ${dados.transporte.modalidade || "N/D"}`,
-        margem + 7,
-        y + 40
-    );
-
-    doc.text(
-        `Placa: ${dados.transporte.placa || "N/D"}  UF: ${
-            dados.transporte.uf || "N/D"
-        }`,
-        margem + 280,
-        y + 8
-    );
-
-    doc.text(
-        `Volumes: ${dados.transporte.quantidade || "N/D"}  Espécie: ${
-            dados.transporte.especie || "N/D"
-        }`,
-        margem + 280,
-        y + 24
-    );
-
-    doc.text(
-        `Peso bruto: ${dados.transporte.pesoBruto || "N/D"}  Peso líquido: ${
-            dados.transporte.pesoLiquido || "N/D"
-        }`,
-        margem + 280,
-        y + 40
-    );
-
-    return y + altura + 16;
-}
-
-function desenharInformacoesAdicionais(doc, dados, y) {
-    const margem = 32;
-    const largura = 531;
-
-    if (!dados.informacoesAdicionais) {
-        return y;
-    }
-
-    if (y > 680) {
-        doc.addPage();
-        y = 35;
-    }
-
-    const texto = quebrarTexto(dados.informacoesAdicionais, 120);
-    const altura = Math.max(60, texto.split("\n").length * 11 + 28);
-
-    doc.font("Helvetica-Bold")
-        .fontSize(8)
-        .text("INFORMAÇÕES ADICIONAIS", margem, y);
-
-    y += 12;
-
-    doc.rect(margem, y, largura, altura).stroke();
-
-    doc.font("Helvetica")
-        .fontSize(7)
-        .text(texto, margem + 7, y + 8, {
-            width: largura - 14,
-            height: altura - 14
-        });
-
-    return y + altura + 12;
-}
-
-function gerarPdfDanfe(xmlString) {
-    return new Promise((resolve, reject) => {
-        try {
-            const dados = obterDadosNFe(xmlString);
-
-            const doc = new PDFDocument({
-                size: "A4",
-                margins: {
-                    top: 28,
-                    bottom: 28,
-                    left: 32,
-                    right: 32
-                },
-                bufferPages: true,
-                info: {
-                    Title: `DANFE NF-e ${dados.identificacao.numero || ""}`,
-                    Author: "Bridge SEFAZ",
-                    Subject: "Documento Auxiliar da Nota Fiscal Eletrônica"
-                }
-            });
-
-            const buffers = [];
-
-            doc.on("data", (chunk) => buffers.push(chunk));
-
-            doc.on("error", reject);
-
-            doc.on("end", () => {
-                resolve(Buffer.concat(buffers));
-            });
-
-            let y = desenharCabecalhoDanfe(doc, dados);
-
-            y = desenharEmitente(doc, dados, y);
-            y = desenharDestinatario(doc, dados, y);
-            y = desenharTabelaProdutos(doc, dados.produtos, y);
-            y += 16;
-            y = desenharTotais(doc, dados, y);
-            y = desenharTransporte(doc, dados, y);
-            y = desenharInformacoesAdicionais(doc, dados, y);
-
-            const paginas = doc.bufferedPageRange();
-
-            for (
-                let pagina = 0;
-                pagina < paginas.count;
-                pagina++
-            ) {
-                doc.switchToPage(pagina);
-
-                doc.font("Helvetica")
-                    .fontSize(6)
-                    .fillColor("#555555")
-                    .text(
-                        `Bridge SEFAZ - DANFE | Página ${pagina + 1} de ${paginas.count}`,
-                        32,
-                        805,
-                        {
-                            width: 531,
-                            align: "center"
-                        }
-                    );
-            }
-
-            doc.end();
-        } catch (error) {
-            reject(error);
-        }
-    });
-}
-
-app.post("/api/xml/render-pdf", validarAPI, async (req, res) => {
+// ============================================================
+// GERAÇÃO DE DANFE PDF
+// Endpoint público somente para renderização de PDF
+// Os demais endpoints continuam protegidos por API Key
+// ============================================================
+app.post("/api/xml/render-pdf", async (req, res) => {
     try {
-        const { xmlBase64, tipo } = req.body;
+        const { xmlBase64, tipo } = req.body || {};
 
-        if (!xmlBase64) {
+        if (!xmlBase64 || typeof xmlBase64 !== "string") {
             return res.status(400).json({
                 success: false,
-                error: "XML Base64 não fornecido."
+                error: "xmlBase64 não fornecido"
             });
         }
 
-        const xmlLimpo = sanitizarBase64(xmlBase64);
-
-        if (!xmlLimpo) {
-            return res.status(400).json({
-                success: false,
-                error: "XML Base64 vazio."
-            });
-        }
+        const base64Limpo = sanitizarBase64(xmlBase64);
 
         let xmlString;
 
         try {
-            xmlString = Buffer.from(xmlLimpo, "base64").toString("utf8");
+            xmlString = Buffer
+                .from(base64Limpo, "base64")
+                .toString("utf8")
+                .replace(/^\uFEFF/, "")
+                .trim();
         } catch (error) {
             return res.status(400).json({
                 success: false,
-                error: "XML Base64 inválido."
+                error: "Base64 inválido"
             });
         }
 
-        if (!xmlString.includes("<")) {
+        // Impede que HTML, JSON ou página do frontend sejam processados como XML
+        const pareceXml =
+            xmlString.startsWith("<?xml") ||
+            xmlString.startsWith("<nfeProc") ||
+            xmlString.startsWith("<NFe") ||
+            xmlString.includes("<nfeProc") ||
+            xmlString.includes("<infNFe");
+
+        if (!pareceXml) {
             return res.status(400).json({
                 success: false,
-                error: "O conteúdo informado não parece ser um XML válido."
+                error: "O conteúdo enviado não é um XML NF-e válido",
+                recebido: xmlString.substring(0, 120)
             });
         }
 
-        const pdfBuffer = await gerarPdfDanfe(xmlString);
+        function escaparTexto(valor) {
+            return String(valor || "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&apos;");
+        }
 
-        return res.json({
-            success: true,
-            tipo: tipo || "danfe",
-            filename: "danfe-nfe.pdf",
-            mimeType: "application/pdf",
-            size: pdfBuffer.length,
-            pdfBase64: pdfBuffer.toString("base64")
+        function extrairTag(xml, tag) {
+            const regex = new RegExp(
+                `<(?:[\\w-]+:)?${tag}\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w-]+:)?${tag}>`,
+                "i"
+            );
+
+            const match = xml.match(regex);
+            return match ? match[1].trim() : "";
+        }
+
+        function extrairChave(xml) {
+            const chaveDireta =
+                extrairTag(xml, "chNFe") ||
+                extrairTag(xml, "chCTe") ||
+                extrairTag(xml, "chMDFe");
+
+            if (chaveDireta) {
+                return chaveDireta.replace(/\D/g, "");
+            }
+
+            const idMatch = xml.match(/Id=["'](?:NFe|CTe|MDFe)?([0-9]{44})["']/i);
+
+            return idMatch ? idMatch[1] : "";
+        }
+
+        function formatarMoeda(valor) {
+            const numero = Number(
+                String(valor || "0")
+                    .replace(/\./g, "")
+                    .replace(",", ".")
+            );
+
+            if (!Number.isFinite(numero)) return "R$ 0,00";
+
+            return numero.toLocaleString("pt-BR", {
+                style: "currency",
+                currency: "BRL"
+            });
+        }
+
+        function formatarData(valor) {
+            if (!valor) return "N/D";
+
+            const data = String(valor)
+                .replace("T", " ")
+                .replace(/[+-]\d{2}:\d{2}$/, "");
+
+            return data;
+        }
+
+        const chave = extrairChave(xmlString) || "N/D";
+        const cnpjEmitente = extrairTag(xmlString, "CNPJ") || "N/D";
+        const nomeEmitente = extrairTag(xmlString, "xNome") || "N/D";
+        const fantasia = extrairTag(xmlString, "xFant");
+        const endereco = extrairTag(xmlString, "xLgr");
+        const numero = extrairTag(xmlString, "nro");
+        const bairro = extrairTag(xmlString, "xBairro");
+        const cidade = extrairTag(xmlString, "xMun");
+        const uf = extrairTag(xmlString, "UF");
+        const cep = extrairTag(xmlString, "CEP");
+
+        const cnpjDestinatario =
+            extrairTag(xmlString, "dest") &&
+            (
+                extrairTag(
+                    xmlString.substring(xmlString.indexOf("<dest")),
+                    "CNPJ"
+                ) ||
+                extrairTag(
+                    xmlString.substring(xmlString.indexOf("<dest")),
+                    "CPF"
+                )
+            );
+
+        const numeroNF = extrairTag(xmlString, "nNF") || "N/D";
+        const serie = extrairTag(xmlString, "serie") || "N/D";
+        const dataEmissao =
+            extrairTag(xmlString, "dhEmi") ||
+            extrairTag(xmlString, "dEmi") ||
+            "N/D";
+
+        const naturezaOperacao =
+            extrairTag(xmlString, "natOp") || "N/D";
+
+        const valorProdutos =
+            extrairTag(xmlString, "vProd") || "0";
+
+        const valorFrete =
+            extrairTag(xmlString, "vFrete") || "0";
+
+        const valorDesconto =
+            extrairTag(xmlString, "vDesc") || "0";
+
+        const valorNota =
+            extrairTag(xmlString, "vNF") || "0";
+
+        const protocolo =
+            extrairTag(xmlString, "nProt") ||
+            extrairTag(xmlString, "nProt") ||
+            "N/D";
+
+        const doc = new PDFDocument({
+            size: "A4",
+            margin: 28,
+            bufferPages: true
         });
+
+        const chunks = [];
+
+        doc.on("data", (chunk) => chunks.push(chunk));
+
+        doc.on("error", (error) => {
+            console.error("Erro interno do PDFKit:", error);
+        });
+
+        doc.on("end", () => {
+            const pdfBuffer = Buffer.concat(chunks);
+
+            return res.status(200).json({
+                success: true,
+                tipo: tipo || "NFe",
+                chave,
+                pdfBase64: pdfBuffer.toString("base64")
+            });
+        });
+
+        const larguraPagina = 595;
+        const margem = 28;
+        const larguraUtil = larguraPagina - margem * 2;
+
+        function linha(y) {
+            doc
+                .moveTo(margem, y)
+                .lineTo(larguraPagina - margem, y)
+                .lineWidth(0.7)
+                .strokeColor("#222222")
+                .stroke();
+        }
+
+        function caixa(x, y, largura, altura, titulo) {
+            doc
+                .rect(x, y, largura, altura)
+                .lineWidth(0.7)
+                .strokeColor("#222222")
+                .stroke();
+
+            if (titulo) {
+                doc
+                    .font("Helvetica-Bold")
+                    .fontSize(7)
+                    .fillColor("#222222")
+                    .text(titulo, x + 5, y + 4, {
+                        width: largura - 10,
+                        height: 10
+                    });
+            }
+        }
+
+        function texto(label, valor, x, y, largura, tamanho = 8) {
+            doc
+                .font("Helvetica-Bold")
+                .fontSize(7)
+                .fillColor("#333333")
+                .text(label, x, y, {
+                    width: largura
+                });
+
+            doc
+                .font("Helvetica")
+                .fontSize(tamanho)
+                .fillColor("#000000")
+                .text(valor || "N/D", x, y + 9, {
+                    width: largura,
+                    ellipsis: true
+                });
+        }
+
+        // Cabeçalho DANFE
+        doc
+            .font("Helvetica-Bold")
+            .fontSize(13)
+            .fillColor("#000000")
+            .text("DANFE", margem, 30, {
+                width: 90,
+                align: "center"
+            });
+
+        doc
+            .font("Helvetica")
+            .fontSize(7)
+            .text("Documento Auxiliar da Nota Fiscal Eletrônica", margem, 47, {
+                width: 90,
+                align: "center"
+            });
+
+        doc
+            .font("Helvetica-Bold")
+            .fontSize(9)
+            .text("0 - ENTRADA     1 - SAÍDA", 130, 32, {
+                width: 160,
+                align: "center"
+            });
+
+        doc
+            .font("Helvetica-Bold")
+            .fontSize(10)
+            .text(`NF-e Nº ${numeroNF}`, 340, 30, {
+                width: 200,
+                align: "right"
+            });
+
+        doc
+            .font("Helvetica")
+            .fontSize(8)
+            .text(`Série: ${serie}`, 340, 45, {
+                width: 200,
+                align: "right"
+            });
+
+        linha(68);
+
+        // Identificação do emitente
+        caixa(margem, 76, larguraUtil, 78, "IDENTIFICAÇÃO DO EMITENTE");
+
+        doc
+            .font("Helvetica-Bold")
+            .fontSize(11)
+            .text(nomeEmitente, margem + 8, 94, {
+                width: 270
+            });
+
+        if (fantasia) {
+            doc
+                .font("Helvetica")
+                .fontSize(8)
+                .text(`Nome fantasia: ${fantasia}`, margem + 8, 110, {
+                    width: 270
+                });
+        }
+
+        doc
+            .font("Helvetica")
+            .fontSize(8)
+            .text(
+                `CNPJ: ${cnpjEmitente}`,
+                margem + 8,
+                127,
+                { width: 270 }
+            );
+
+        doc
+            .font("Helvetica")
+            .fontSize(8)
+            .text(
+                `${endereco || "Endereço não informado"}, ${numero || "S/N"}`,
+                315,
+                94,
+                { width: 235 }
+            );
+
+        doc
+            .font("Helvetica")
+            .fontSize(8)
+            .text(
+                `${bairro || ""} - ${cidade || ""}/${uf || ""}`,
+                315,
+                110,
+                { width: 235 }
+            );
+
+        doc
+            .font("Helvetica")
+            .fontSize(8)
+            .text(
+                `CEP: ${cep || "N/D"}`,
+                315,
+                127,
+                { width: 235 }
+            );
+
+        // Dados da NF-e
+        caixa(margem, 162, larguraUtil, 68, "DADOS DA NF-e");
+
+        texto("CHAVE DE ACESSO", chave, margem + 8, 180, 350, 8);
+
+        doc
+            .font("Helvetica-Bold")
+            .fontSize(8)
+            .text("PROTOCOLO DE AUTORIZAÇÃO", 400, 180, {
+                width: 150
+            });
+
+        doc
+            .font("Helvetica")
+            .fontSize(8)
+            .text(protocolo, 400, 190, {
+                width: 150
+            });
+
+        texto(
+            "NATUREZA DA OPERAÇÃO",
+            naturezaOperacao,
+            margem + 8,
+            207,
+            270,
+            8
+        );
+
+        texto(
+            "DATA DE EMISSÃO",
+            formatarData(dataEmissao),
+            315,
+            207,
+            120,
+            8
+        );
+
+        texto(
+            "TIPO",
+            tipo || "NFe",
+            450,
+            207,
+            90,
+            8
+        );
+
+        // Destinatário
+        caixa(margem, 238, larguraUtil, 62, "DESTINATÁRIO / REMETENTE");
+
+        texto(
+            "DOCUMENTO",
+            cnpjDestinatario || "N/D",
+            margem + 8,
+            256,
+            180,
+            8
+        );
+
+        texto(
+            "CHAVE DE ACESSO",
+            chave,
+            220,
+            256,
+            315,
+            8
+        );
+
+        // Totais
+        caixa(margem, 308, larguraUtil, 65, "CÁLCULO DO IMPOSTO");
+
+        texto(
+            "VALOR DOS PRODUTOS",
+            formatarMoeda(valorProdutos),
+            margem + 8,
+            326,
+            130,
+            8
+        );
+
+        texto(
+            "VALOR DO FRETE",
+            formatarMoeda(valorFrete),
+            170,
+            326,
+            110,
+            8
+        );
+
+        texto(
+            "DESCONTO",
+            formatarMoeda(valorDesconto),
+            295,
+            326,
+            100,
+            8
+        );
+
+        texto(
+            "VALOR TOTAL DA NF",
+            formatarMoeda(valorNota),
+            410,
+            326,
+            125,
+            9
+        );
+
+        // Informações adicionais
+        caixa(margem, 381, larguraUtil, 94, "INFORMAÇÕES ADICIONAIS");
+
+        doc
+            .font("Helvetica")
+            .fontSize(8)
+            .text(
+                "Documento gerado automaticamente pelo sistema.",
+                margem + 8,
+                402,
+                {
+                    width: larguraUtil - 16
+                }
+            );
+
+        doc
+            .font("Helvetica")
+            .fontSize(8)
+            .text(
+                `Chave de acesso: ${chave}`,
+                margem + 8,
+                420,
+                {
+                    width: larguraUtil - 16
+                }
+            );
+
+        doc
+            .font("Helvetica")
+            .fontSize(8)
+            .text(
+                `Emitente: ${nomeEmitente}`,
+                margem + 8,
+                438,
+                {
+                    width: larguraUtil - 16
+                }
+            );
+
+        // Rodapé
+        linha(505);
+
+        doc
+            .font("Helvetica")
+            .fontSize(7)
+            .fillColor("#555555")
+            .text(
+                "DANFE gerado automaticamente pelo Bridge SEFAZ.",
+                margem,
+                518,
+                {
+                    width: larguraUtil,
+                    align: "center"
+                }
+            );
+
+        doc
+            .font("Helvetica")
+            .fontSize(7)
+            .text(
+                `Gerado em ${new Date().toLocaleString("pt-BR")}`,
+                margem,
+                532,
+                {
+                    width: larguraUtil,
+                    align: "center"
+                }
+            );
+
+        doc.end();
     } catch (error) {
-        console.error("Erro ao gerar PDF DANFE:", error);
+        console.error("Erro ao gerar DANFE PDF:", error);
 
         if (!res.headersSent) {
             return res.status(500).json({
                 success: false,
-                error: "Erro ao gerar DANFE: " + error.message
+                error: error.message || "Erro interno ao gerar PDF"
             });
         }
     }
