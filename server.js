@@ -14,6 +14,9 @@ import rateLimit from 'express-rate-limit';
 import forge from 'node-forge';
 import { SignedXml } from 'xml-crypto';
 
+// IMPORTAR BIBLIOTECA DE PDF AQUI (Descomente após instalar com npm install danfe)
+// import Danfe from 'danfe'; 
+
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 
@@ -60,7 +63,7 @@ function sanitizarBase64(b64) {
 }
 
 // ============================================================
-// 1. MÓDULO: DISTRIBUIÇÃO DF-E (CONSULTA / SYNC)
+// 1. MÓDULO: DISTRIBUIÇÃO DF-E E PDF
 // ============================================================
 function processarRespostaSefaz(soapXml) {
     const retorno = { cStat: '', ultNSU: '', maxNSU: '', docs: [] };
@@ -197,6 +200,44 @@ app.post("/api/sefaz/distribuicao", validarAPI, (req, res) => consultarSefaz(req
 app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, res));
 app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
+// ============================================================
+// NOVO ENDPOINT: GERAÇÃO DE PDF ON DEMAND
+// ============================================================
+app.post("/api/xml/render-pdf", (req, res) => {
+    try {
+        const { xmlBase64, tipo } = req.body;
+        
+        if (!xmlBase64) {
+            return res.status(400).json({ success: false, error: "XML Base64 não fornecido" });
+        }
+
+        const xmlString = Buffer.from(xmlBase64, 'base64').toString('utf8');
+
+        // AQUI VOCÊ INSERE A SUA BIBLIOTECA. Exemplo com 'danfe':
+        /*
+        const danfeGerado = new Danfe(xmlString);
+        danfeGerado.gerarPDF((err, pdfBuffer) => {
+            if (err) return res.status(500).json({ success: false, error: "Erro gerando PDF" });
+            
+            return res.json({ 
+                success: true, 
+                pdfBase64: pdfBuffer.toString('base64') 
+            });
+        });
+        */
+
+        // Placeholder para não quebrar a aplicação caso a biblioteca ainda não esteja instalada
+        res.json({
+            success: true,
+            message: "Módulo de PDF alcançado com sucesso! Integre a biblioteca para retornar o Base64",
+            // pdfBase64: "JVBERi0xLjMK..."
+        });
+
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 
 // ============================================================
 // 2. MÓDULO: MANIFESTAÇÃO DO DESTINATÁRIO NF-e
@@ -225,12 +266,10 @@ function obterEndpointManifestacao(endpointFornecido = null) {
 
     const tpAmb = obterAmbienteNFe();
 
-    // PRODUÇÃO (Portal Nacional oficial sem 'www1' para RecepcaoEvento4)
     if (tpAmb === "1") {
         return "https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
     }
 
-    // HOMOLOGAÇÃO
     return "https://hom.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
 }
 
@@ -501,16 +540,6 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
         const endpointUrl = new URL(urlDestino);
         const soapBuffer = Buffer.from(soapEnvelope, "utf8");
 
-        console.log("==============================================");
-        console.log("MANIFESTAÇÃO NF-e");
-        console.log("Request ID:", requestId);
-        console.log("Endpoint:", urlDestino);
-        console.log("CNPJ:", cnpjLimpo);
-        console.log("Chave:", chaveLimpa);
-        console.log("Tipo:", tipoManifestacao);
-        console.log("Ambiente:", obterAmbienteNFe());
-        console.log("==============================================");
-
         const options = {
             hostname: endpointUrl.hostname,
             port: endpointUrl.port || 443,
@@ -537,15 +566,6 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
                 if (finalizado) return;
                 finalizado = true;
 
-                console.log("==============================================");
-                console.log("RESPOSTA SEFAZ - MANIFESTAÇÃO");
-                console.log("Request ID:", requestId);
-                console.log("Status HTTP:", sefazRes.statusCode);
-                console.log("Headers:", sefazRes.headers);
-                console.log("Body:");
-                console.log(body);
-                console.log("==============================================");
-
                 const retorno = interpretarRespostaManifestacao(body, sefazRes.statusCode);
 
                 if (retorno.sucesso) {
@@ -570,8 +590,7 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
                     requestId,
                     statusCode: sefazRes.statusCode,
                     cStat: retorno.cStatEvento,
-                    error: mensagemErro,
-                    sefazResponse: process.env.NODE_ENV === "production" ? undefined : body
+                    error: mensagemErro
                 });
             });
         });
@@ -585,10 +604,9 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
         });
 
         sefazReq.on("error", (error) => {
-            console.error("ERRO HTTPS SEFAZ:", error);
             if (!finalizado) {
                 finalizado = true;
-                return res.status(502).json({ success: false, requestId, error: "Erro de comunicação com a SEFAZ: " + error.message });
+                return res.status(502).json({ success: false, requestId, error: "Erro de comunicação: " + error.message });
             }
         });
 
@@ -596,16 +614,12 @@ app.post("/rpa/xml/manifest", validarAPI, async (req, res) => {
         sefazReq.end();
 
     } catch (error) {
-        console.error("ERRO MANIFESTAÇÃO:", error);
         if (!res.headersSent) {
             return res.status(500).json({ success: false, requestId, error: error.message });
         }
     }
 });
 
-// ============================================================
-// FINALIZAÇÃO DO APP
-// ============================================================
 app.use((req, res) => res.status(404).json({ success: false, error: "Endpoint inexistente" }));
 
 app.listen(PORT, "0.0.0.0", () => {
