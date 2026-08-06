@@ -10,7 +10,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import { NFE_GerarDanfe } from '@nfewizard/danfe';
+import { NFE_GerarDanfe } from '';
 import forge from 'node-forge';
 import { SignedXml } from 'xml-crypto';
 
