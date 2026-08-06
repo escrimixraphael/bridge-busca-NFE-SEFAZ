@@ -742,694 +742,329 @@ function extrairDadosNfe(xml, tipo = "NFe") {
 }
 
 /* ============================================================
-   COMPONENTES DO DANFE
+   COMPONENTES DO DANFE (PADRÃO OFICIAL MOC)
 ============================================================ */
 
-function criarCodigoBarras(chave) {
+async function criarCodigoBarras(chave) {
     return bwipjs.toBuffer({
         bcid: "code128",
         text: chave,
         scale: 2,
-        height: 12,
+        height: 10,
         includetext: false,
         backgroundcolor: "FFFFFF"
     });
 }
 
-function desenharBorda(doc, x, y, largura, altura, espessura = 0.6) {
-    doc
-        .lineWidth(espessura)
-        .strokeColor("#000000")
-        .rect(x, y, largura, altura)
-        .stroke();
+function desenharBorda(doc, x, y, largura, altura, espessura = 0.5) {
+    doc.lineWidth(espessura)
+       .strokeColor("#000000")
+       .rect(x, y, largura, altura)
+       .stroke();
 }
 
-function desenharTituloCaixa(doc, titulo, x, y, largura) {
-    doc
-        .font("Helvetica-Bold")
-        .fontSize(6.5)
-        .fillColor("#000000")
-        .text(titulo, x + 4, y + 3, {
-            width: largura - 8,
-            lineBreak: false
-        });
-}
-
-function desenharCampo(
-    doc,
-    titulo,
-    valor,
-    x,
-    y,
-    largura,
-    altura = 28,
-    tamanho = 7
-) {
+function desenharCampo(doc, titulo, valor, x, y, largura, altura, tamTitulo = 5.5, tamValor = 7) {
     desenharBorda(doc, x, y, largura, altura);
+    
+    doc.font("Helvetica-Bold")
+       .fontSize(tamTitulo)
+       .fillColor("#000000")
+       .text(titulo, x + 3, y + 3, { width: largura - 6, lineBreak: false });
 
-    doc
-        .font("Helvetica-Bold")
-        .fontSize(5.5)
-        .fillColor("#333333")
-        .text(titulo, x + 4, y + 3, {
-            width: largura - 8,
-            lineBreak: false
-        });
-
-    doc
-        .font("Helvetica")
-        .fontSize(tamanho)
-        .fillColor("#000000")
-        .text(textoSeguro(valor), x + 4, y + 12, {
-            width: largura - 8,
-            height: altura - 13,
-            ellipsis: true,
-            lineBreak: false
-        });
+    doc.font("Helvetica")
+       .fontSize(tamValor)
+       .text(textoSeguro(valor, ""), x + 3, y + 12, { 
+           width: largura - 6, 
+           height: altura - 14, 
+           ellipsis: true, 
+           lineBreak: false 
+       });
 }
 
-function desenharCabecalhoDanfe(doc, dados, margem, largura) {
-    const altura = 82;
-    const y = 28;
+function desenharLinhaTracejada(doc, margem, largura, y) {
+    doc.lineWidth(0.5)
+       .strokeColor("#000000")
+       .dash(3, { space: 3 })
+       .moveTo(margem, y)
+       .lineTo(margem + largura, y)
+       .stroke()
+       .undash();
+}
 
+function desenharCanhoto(doc, margem, largura, y) {
+    const altura = 35;
     desenharBorda(doc, margem, y, largura, altura);
+    
+    doc.font("Helvetica").fontSize(6)
+       .text("RECEBEMOS DOS PRODUTOS E/OU SERVIÇOS CONSTANTES DA NOTA FISCAL ELETRÔNICA INDICADA ABAIXO", margem + 3, y + 3, { width: largura - 150 });
+       
+    desenharBorda(doc, margem, y + 12, 110, 23);
+    doc.font("Helvetica-Bold").fontSize(5.5).text("DATA DE RECEBIMENTO", margem + 3, y + 14);
+    
+    desenharBorda(doc, margem + 110, y + 12, largura - 260, 23);
+    doc.font("Helvetica-Bold").fontSize(5.5).text("IDENTIFICAÇÃO E ASSINATURA DO RECEBEDOR", margem + 113, y + 14);
 
-    const larguraEsquerda = 150;
-    const larguraDireita = 155;
-    const xCentro = margem + larguraEsquerda;
-    const xDireita = margem + largura - larguraDireita;
+    // Bloco direito do canhoto (NF-e Número)
+    desenharBorda(doc, margem + largura - 150, y, 150, altura);
+    doc.font("Helvetica-Bold").fontSize(10)
+       .text("NF-e", margem + largura - 140, y + 8, { width: 130, align: "center" });
+    
+    return y + altura + 10;
+}
 
-    doc
-        .font("Helvetica-Bold")
-        .fontSize(16)
-        .text("DANFE", margem + 8, y + 10, {
-            width: 70,
-            align: "center"
-        });
+function desenharCabecalhoPrincipal(doc, dados, margem, largura, y, codigoBarras, paginaAtual, totalPaginas) {
+    const altura = 90;
+    
+    // Bloco Emitente
+    const wEmit = 240;
+    desenharBorda(doc, margem, y, wEmit, altura);
+    doc.font("Helvetica-Bold").fontSize(9).text(limitarTexto(dados.emitente.nome, 60), margem + 3, y + 5, { width: wEmit - 6, align: "center" });
+    doc.font("Helvetica").fontSize(7).text(`${dados.emitente.endereco}, ${dados.emitente.bairro}`, margem + 3, y + 30, { width: wEmit - 6, align: "center" });
+    doc.text(`${dados.emitente.cidade} - ${dados.emitente.uf} | CEP: ${formatarCep(dados.emitente.cep)}`, margem + 3, y + 40, { width: wEmit - 6, align: "center" });
+    doc.text(`CNPJ: ${formatarCnpjCpf(dados.emitente.cnpj)}`, margem + 3, y + 55, { width: wEmit - 6, align: "center" });
 
-    doc
-        .font("Helvetica")
-        .fontSize(6.5)
-        .text("Documento Auxiliar da Nota Fiscal Eletrônica", margem + 4, y + 31, {
-            width: 78,
-            align: "center"
-        });
+    // Bloco Central DANFE
+    const xDanfe = margem + wEmit;
+    const wDanfe = 70;
+    desenharBorda(doc, xDanfe, y, wDanfe, altura);
+    doc.font("Helvetica-Bold").fontSize(12).text("DANFE", xDanfe, y + 5, { width: wDanfe, align: "center" });
+    doc.font("Helvetica").fontSize(6).text("Documento Auxiliar da Nota Fiscal Eletrônica", xDanfe + 2, y + 20, { width: wDanfe - 4, align: "center" });
+    
+    doc.font("Helvetica").fontSize(7).text("0 - Entrada", xDanfe + 5, y + 40);
+    doc.font("Helvetica").fontSize(7).text("1 - Saída", xDanfe + 5, y + 50);
+    
+    desenharBorda(doc, xDanfe + 50, y + 43, 12, 12);
+    doc.font("Helvetica-Bold").fontSize(8).text(dados.tipoOperacao || "1", xDanfe + 50, y + 46, { width: 12, align: "center" });
 
-    doc
-        .font("Helvetica-Bold")
-        .fontSize(8)
-        .text("0 - ENTRADA", margem + 88, y + 13, {
-            width: 58,
-            align: "center"
-        });
+    doc.font("Helvetica-Bold").fontSize(8).text(`Nº ${dados.numero}`, xDanfe, y + 65, { width: wDanfe, align: "center" });
+    doc.text(`SÉRIE ${dados.serie}`, xDanfe, y + 75, { width: wDanfe, align: "center" });
 
-    doc
-        .font("Helvetica-Bold")
-        .fontSize(8)
-        .text("1 - SAÍDA", margem + 88, y + 30, {
-            width: 58,
-            align: "center"
-        });
-
-    doc
-        .font("Helvetica")
-        .fontSize(6.5)
-        .text(
-            dados.tipoOperacao === "0"
-                ? "Entrada marcada no XML"
-                : "Saída marcada no XML",
-            margem + 82,
-            y + 51,
-            {
-                width: 68,
-                align: "center"
-            }
-        );
-
-    doc
-        .moveTo(xCentro, y)
-        .lineTo(xCentro, y + altura)
-        .stroke();
-
-    doc
-        .moveTo(xDireita, y)
-        .lineTo(xDireita, y + altura)
-        .stroke();
-
-    doc
-        .font("Helvetica-Bold")
-        .fontSize(8)
-        .text("NF-e", xDireita + 8, y + 10, {
-            width: larguraDireita - 16,
-            align: "center"
-        });
-
-    doc
-        .font("Helvetica-Bold")
-        .fontSize(10)
-        .text(`Nº ${textoSeguro(dados.numero)}`, xDireita + 8, y + 28, {
-            width: larguraDireita - 16,
-            align: "center"
-        });
-
-    doc
-        .font("Helvetica")
-        .fontSize(8)
-        .text(`Série ${textoSeguro(dados.serie)}`, xDireita + 8, y + 48, {
-            width: larguraDireita - 16,
-            align: "center"
-        });
-
-    doc
-        .font("Helvetica-Bold")
-        .fontSize(9)
-        .text("DANFE", xCentro + 10, y + 10, {
-            width: 115,
-            align: "center"
-        });
-
-    doc
-        .font("Helvetica")
-        .fontSize(7)
-        .text("Documento Auxiliar da Nota Fiscal Eletrônica", xCentro + 10, y + 26, {
-            width: 115,
-            align: "center"
-        });
-
-    if (dados.chave) {
-        doc
-            .font("Helvetica-Bold")
-            .fontSize(6.5)
-            .text("CHAVE DE ACESSO", xCentro + 10, y + 47, {
-                width: 115,
-                align: "center"
-            });
-
-        doc
-            .font("Helvetica")
-            .fontSize(7)
-            .text(formatarChave(dados.chave), xCentro + 10, y + 59, {
-                width: 115,
-                align: "center"
-            });
+    // Bloco Direito (Código de Barras / Chave)
+    const xDir = xDanfe + wDanfe;
+    const wDir = largura - wEmit - wDanfe;
+    desenharBorda(doc, xDir, y, wDir, altura);
+    
+    if (codigoBarras) {
+        doc.image(codigoBarras, xDir + 10, y + 5, { width: wDir - 20, height: 35 });
     }
-}
+    
+    doc.font("Helvetica-Bold").fontSize(6).text("CHAVE DE ACESSO", xDir + 5, y + 45);
+    doc.font("Helvetica-Bold").fontSize(8).text(formatarChave(dados.chave), xDir + 5, y + 55, { width: wDir - 10, align: "center" });
+    
+    doc.font("Helvetica").fontSize(7).text("Consulta de autenticidade no portal nacional da NF-e www.nfe.fazenda.gov.br/portal ou no site da Sefaz Autorizadora", xDir + 5, y + 70, { width: wDir - 10, align: "center" });
 
-function desenharEmitente(doc, dados, margem, largura, y) {
-    const altura = 72;
+    // Natureza da Operação / Protocolo
+    desenharCampo(doc, "NATUREZA DA OPERAÇÃO", dados.naturezaOperacao, margem, y + altura, largura - 200, 20);
+    desenharCampo(doc, "PROTOCOLO DE AUTORIZAÇÃO DE USO", dados.protocolo, margem + largura - 200, y + altura, 200, 20);
 
-    desenharBorda(doc, margem, y, largura, altura);
-    desenharTituloCaixa(doc, "IDENTIFICAÇÃO DO EMITENTE", margem, y, largura);
-
-    const divisor = margem + 300;
-
-    doc
-        .moveTo(divisor, y)
-        .lineTo(divisor, y + altura)
-        .stroke();
-
-    doc
-        .font("Helvetica-Bold")
-        .fontSize(9)
-        .text(
-            limitarTexto(dados.emitente.nome, 65),
-            margem + 8,
-            y + 18,
-            {
-                width: 275
-            }
-        );
-
-    doc
-        .font("Helvetica")
-        .fontSize(7)
-        .text(
-            dados.emitente.fantasia
-                ? `Nome fantasia: ${dados.emitente.fantasia}`
-                : "",
-            margem + 8,
-            y + 33,
-            {
-                width: 275
-            }
-        );
-
-    doc
-        .font("Helvetica")
-        .fontSize(7)
-        .text(
-            `CNPJ: ${formatarCnpjCpf(dados.emitente.cnpj)}   IE: ${textoSeguro(dados.emitente.ie, "")}`,
-            margem + 8,
-            y + 48,
-            {
-                width: 275
-            }
-        );
-
-    doc
-        .font("Helvetica")
-        .fontSize(7)
-        .text(
-            `${dados.emitente.endereco} - ${dados.emitente.bairro}`,
-            divisor + 8,
-            y + 19,
-            {
-                width: largura - 316,
-                ellipsis: true
-            }
-        );
-
-    doc
-        .font("Helvetica")
-        .fontSize(7)
-        .text(
-            `${dados.emitente.cidade}/${dados.emitente.uf}`,
-            divisor + 8,
-            y + 35,
-            {
-                width: largura - 316
-            }
-        );
-
-    doc
-        .font("Helvetica")
-        .fontSize(7)
-        .text(
-            `CEP: ${formatarCep(dados.emitente.cep)}`,
-            divisor + 8,
-            y + 51,
-            {
-                width: largura - 316
-            }
-        );
-
-    return y + altura;
+    return y + altura + 25; // Retorna o próximo Y
 }
 
 function desenharDestinatario(doc, dados, margem, largura, y) {
-    const altura = 68;
-
-    desenharBorda(doc, margem, y, largura, altura);
-    desenharTituloCaixa(doc, "DESTINATÁRIO / REMETENTE", margem, y, largura);
-
-    desenharCampo(
-        doc,
-        "NOME / RAZÃO SOCIAL",
-        dados.destinatario.nome,
-        margem + 4,
-        y + 15,
-        250,
-        25,
-        7
-    );
-
-    desenharCampo(
-        doc,
-        "CNPJ / CPF",
-        formatarCnpjCpf(dados.destinatario.documento),
-        margem + 258,
-        y + 15,
-        125,
-        25,
-        7
-    );
-
-    desenharCampo(
-        doc,
-        "DATA DE EMISSÃO",
-        formatarData(dados.dataEmissao),
-        margem + 387,
-        y + 15,
-        largura - 391,
-        25,
-        7
-    );
-
-    desenharCampo(
-        doc,
-        "ENDEREÇO",
-        `${dados.destinatario.endereco} - ${dados.destinatario.bairro}`,
-        margem + 4,
-        y + 42,
-        310,
-        22,
-        7
-    );
-
-    desenharCampo(
-        doc,
-        "MUNICÍPIO",
-        dados.destinatario.cidade,
-        margem + 318,
-        y + 42,
-        130,
-        22,
-        7
-    );
-
-    desenharCampo(
-        doc,
-        "UF",
-        dados.destinatario.uf,
-        margem + 452,
-        y + 42,
-        largura - 456,
-        22,
-        7
-    );
-
-    return y + altura;
-}
-
-function desenharProdutos(doc, dados, margem, largura, y) {
-    const alturaCabecalho = 22;
-    const alturaLinha = 22;
-    const quantidade = Math.max(dados.produtos.length, 1);
-    const altura = alturaCabecalho + quantidade * alturaLinha + 16;
-
-    desenharBorda(doc, margem, y, largura, altura);
-    desenharTituloCaixa(doc, "DADOS DOS PRODUTOS / SERVIÇOS", margem, y, largura);
-
-    const inicio = y + 16;
-
-    const colunas = [
-        { titulo: "#", largura: 22 },
-        { titulo: "CÓDIGO", largura: 55 },
-        { titulo: "DESCRIÇÃO", largura: 190 },
-        { titulo: "NCM", largura: 55 },
-        { titulo: "CFOP", largura: 38 },
-        { titulo: "UN", largura: 25 },
-        { titulo: "QTD.", largura: 48 },
-        { titulo: "V. UNIT.", largura: 58 },
-        { titulo: "V. TOTAL", largura: largura - 491 }
-    ];
-
-    let x = margem;
-
-    for (const coluna of colunas) {
-        desenharBorda(doc, x, inicio, coluna.largura, alturaCabecalho);
-
-        doc
-            .font("Helvetica-Bold")
-            .fontSize(5.5)
-            .text(coluna.titulo, x + 2, inicio + 7, {
-                width: coluna.largura - 4,
-                align: "center",
-                lineBreak: false
-            });
-
-        x += coluna.largura;
-    }
-
-    const linhas = dados.produtos.length
-        ? dados.produtos
-        : [
-              {
-                  numero: "",
-                  codigo: "",
-                  descricao: "Nenhum produto informado no XML",
-                  ncm: "",
-                  cfop: "",
-                  unidade: "",
-                  quantidade: "",
-                  valorUnitario: "",
-                  valorTotal: ""
-              }
-          ];
-
-    linhas.forEach((produto, indice) => {
-        const linhaY = inicio + alturaCabecalho + indice * alturaLinha;
-        let colunaX = margem;
-
-        const valores = [
-            produto.numero || indice + 1,
-            produto.codigo,
-            produto.descricao,
-            produto.ncm,
-            produto.cfop,
-            produto.unidade,
-            produto.quantidade
-                ? formatarNumero(produto.quantidade, 4)
-                : "",
-            produto.valorUnitario
-                ? formatarMoeda(produto.valorUnitario)
-                : "",
-            produto.valorTotal
-                ? formatarMoeda(produto.valorTotal)
-                : ""
-        ];
-
-        colunas.forEach((coluna, colunaIndice) => {
-            desenharBorda(
-                doc,
-                colunaX,
-                linhaY,
-                coluna.largura,
-                alturaLinha
-            );
-
-            doc
-                .font("Helvetica")
-                .fontSize(5.5)
-                .text(
-                    limitarTexto(valores[colunaIndice], colunaIndice === 2 ? 48 : 20),
-                    colunaX + 2,
-                    linhaY + 7,
-                    {
-                        width: coluna.largura - 4,
-                        align: colunaIndice >= 6 ? "right" : "left",
-                        ellipsis: true,
-                        lineBreak: false
-                    }
-                );
-
-            colunaX += coluna.largura;
-        });
-    });
-
-    return y + altura;
+    doc.font("Helvetica-Bold").fontSize(7).text("DESTINATÁRIO / REMETENTE", margem, y);
+    y += 8;
+    
+    const h = 20;
+    desenharCampo(doc, "NOME / RAZÃO SOCIAL", dados.destinatario.nome, margem, y, 320, h);
+    desenharCampo(doc, "CNPJ / CPF", formatarCnpjCpf(dados.destinatario.documento), margem + 320, y, 130, h);
+    desenharCampo(doc, "DATA DA EMISSÃO", formatarData(dados.dataEmissao).split(' ')[0], margem + 450, y, largura - 450, h);
+    
+    y += h;
+    desenharCampo(doc, "ENDEREÇO", dados.destinatario.endereco, margem, y, 220, h);
+    desenharCampo(doc, "BAIRRO / DISTRITO", dados.destinatario.bairro, margem + 220, y, 100, h);
+    desenharCampo(doc, "CEP", formatarCep(dados.destinatario.cep), margem + 320, y, 70, h);
+    desenharCampo(doc, "DATA DE SAÍDA", "", margem + 390, y, 60, h); // Campo fixo no padrão
+    desenharCampo(doc, "HORA DE SAÍDA", "", margem + 450, y, largura - 450, h); // Campo fixo
+    
+    y += h;
+    desenharCampo(doc, "MUNICÍPIO", dados.destinatario.cidade, margem, y, 220, h);
+    desenharCampo(doc, "UF", dados.destinatario.uf, margem + 220, y, 30, h);
+    desenharCampo(doc, "INSCRIÇÃO ESTADUAL", dados.destinatario.ie, margem + 250, y, 140, h);
+    
+    return y + h + 5;
 }
 
 function desenharTotais(doc, dados, margem, largura, y) {
-    const altura = 65;
-
-    desenharBorda(doc, margem, y, largura, altura);
-    desenharTituloCaixa(doc, "CÁLCULO DO IMPOSTO", margem, y, largura);
-
-    const campos = [
-        ["BASE ICMS", formatarMoeda(dados.totais.icms)],
-        ["VALOR ICMS", formatarMoeda(dados.totais.icms)],
-        ["VALOR IPI", formatarMoeda(dados.totais.ipi)],
-        ["VALOR PRODUTOS", formatarMoeda(dados.totais.produtos)],
-        ["FRETE", formatarMoeda(dados.totais.frete)],
-        ["SEGURO", formatarMoeda(dados.totais.seguro)],
-        ["DESCONTO", formatarMoeda(dados.totais.desconto)],
-        ["VALOR TOTAL NF", formatarMoeda(dados.totais.valorNota)]
-    ];
-
-    const larguraCampo = largura / campos.length;
-
-    campos.forEach(([titulo, valor], indice) => {
-        desenharCampo(
-            doc,
-            titulo,
-            valor,
-            margem + indice * larguraCampo,
-            y + 15,
-            larguraCampo,
-            45,
-            indice === campos.length - 1 ? 8 : 6.5
-        );
-    });
-
-    return y + altura;
+    doc.font("Helvetica-Bold").fontSize(7).text("CÁLCULO DO IMPOSTO", margem, y);
+    y += 8;
+    
+    const h = 20;
+    const w = largura / 6;
+    
+    desenharCampo(doc, "BASE DE CÁLC. ICMS", formatarMoeda(0), margem, y, w, h);
+    desenharCampo(doc, "VALOR DO ICMS", formatarMoeda(dados.totais.icms), margem + w, y, w, h);
+    desenharCampo(doc, "BASE CÁLC. ICMS ST", formatarMoeda(0), margem + w*2, y, w, h);
+    desenharCampo(doc, "VALOR DO ICMS ST", formatarMoeda(0), margem + w*3, y, w, h);
+    desenharCampo(doc, "V. TOTAL PRODUTOS", formatarMoeda(dados.totais.produtos), margem + w*4, y, w*2, h);
+    
+    y += h;
+    desenharCampo(doc, "VALOR DO FRETE", formatarMoeda(dados.totais.frete), margem, y, w, h);
+    desenharCampo(doc, "VALOR DO SEGURO", formatarMoeda(dados.totais.seguro), margem + w, y, w, h);
+    desenharCampo(doc, "DESCONTO", formatarMoeda(dados.totais.desconto), margem + w*2, y, w, h);
+    desenharCampo(doc, "OUTRAS DESPESAS", formatarMoeda(dados.totais.outrasDespesas), margem + w*3, y, w, h);
+    desenharCampo(doc, "VALOR DO IPI", formatarMoeda(dados.totais.ipi), margem + w*4, y, w, h);
+    desenharCampo(doc, "VALOR TOTAL DA NOTA", formatarMoeda(dados.totais.valorNota), margem + w*5, y, w, h);
+    
+    return y + h + 5;
 }
 
 function desenharTransporte(doc, dados, margem, largura, y) {
-    const altura = 53;
+    doc.font("Helvetica-Bold").fontSize(7).text("TRANSPORTADOR / VOLUMES TRANSPORTADOS", margem, y);
+    y += 8;
+    
+    const h = 20;
+    desenharCampo(doc, "RAZÃO SOCIAL", dados.transporte.transportadora, margem, y, 220, h);
+    desenharCampo(doc, "FRETE POR CONTA", dados.transporte.modalidade, margem + 220, y, 80, h);
+    desenharCampo(doc, "CÓDIGO ANTT", "", margem + 300, y, 70, h);
+    desenharCampo(doc, "PLACA VEÍC.", dados.transporte.placa, margem + 370, y, 70, h);
+    desenharCampo(doc, "UF", dados.transporte.uf, margem + 440, y, 30, h);
+    desenharCampo(doc, "CNPJ / CPF", formatarCnpjCpf(dados.transporte.cnpj), margem + 470, y, largura - 470, h);
+    
+    return y + h + 5;
+}
 
-    desenharBorda(doc, margem, y, largura, altura);
-    desenharTituloCaixa(doc, "TRANSPORTADOR / VOLUMES TRANSPORTADOS", margem, y, largura);
+function desenharCabecalhoProdutos(doc, colunas, margem, y) {
+    let x = margem;
+    const h = 15;
+    
+    for (const col of colunas) {
+        desenharBorda(doc, x, y, col.w, h);
+        doc.font("Helvetica-Bold").fontSize(5.5).text(col.tit, x + 2, y + 5, { width: col.w - 4, align: "center" });
+        x += col.w;
+    }
+    return y + h;
+}
 
-    desenharCampo(
-        doc,
-        "MODALIDADE DO FRETE",
-        dados.transporte.modalidade,
-        margem + 4,
-        y + 15,
-        125,
-        30,
-        6.5
-    );
+function desenharProdutosPaginados(doc, dados, margem, largura, startY, drawHeaderCallback) {
+    let y = startY;
+    doc.font("Helvetica-Bold").fontSize(7).text("DADOS DO PRODUTO / SERVIÇO", margem, y);
+    y += 8;
 
-    desenharCampo(
-        doc,
-        "TRANSPORTADORA",
-        dados.transporte.transportadora,
-        margem + 133,
-        y + 15,
-        220,
-        30,
-        6.5
-    );
+    const colunas = [
+        { tit: "CÓD.", w: 45 },
+        { tit: "DESCRIÇÃO DO PRODUTO / SERVIÇO", w: 175 },
+        { tit: "NCM/SH", w: 45 },
+        { tit: "CFOP", w: 30 },
+        { tit: "UNID", w: 30 },
+        { tit: "QTD.", w: 40 },
+        { tit: "V. UNIT.", w: 50 },
+        { tit: "V. TOTAL", w: 50 },
+        { tit: "BC ICMS", w: 40 },
+        { tit: "V. ICMS", w: 40 }
+    ];
 
-    desenharCampo(
-        doc,
-        "CNPJ",
-        formatarCnpjCpf(dados.transporte.cnpj),
-        margem + 357,
-        y + 15,
-        100,
-        30,
-        6.5
-    );
+    y = desenharCabecalhoProdutos(doc, colunas, margem, y);
+    
+    const limitY = 750; // Limite inferior antes de quebrar página
+    const hLinha = 15;
 
-    desenharCampo(
-        doc,
-        "PLACA / UF",
-        `${dados.transporte.placa || ""} ${dados.transporte.uf || ""}`,
-        margem + 461,
-        y + 15,
-        largura - 465,
-        30,
-        6.5
-    );
+    dados.produtos.forEach((prod) => {
+        // Se ultrapassar a página, cria nova e refaz o topo
+        if (y + hLinha > limitY) {
+            doc.addPage();
+            y = 20; // reset margem superior nova página
+            y = drawHeaderCallback(doc, y);
+            doc.font("Helvetica-Bold").fontSize(7).text("DADOS DO PRODUTO / SERVIÇO (Continuação)", margem, y);
+            y += 8;
+            y = desenharCabecalhoProdutos(doc, colunas, margem, y);
+        }
 
-    return y + altura;
+        let x = margem;
+        const valores = [
+            prod.codigo,
+            limitarTexto(prod.descricao, 45),
+            prod.ncm,
+            prod.cfop,
+            prod.unidade,
+            formatarNumero(prod.quantidade, 4),
+            formatarMoeda(prod.valorUnitario),
+            formatarMoeda(prod.valorTotal),
+            "", // bc icms (simplificado)
+            ""  // v. icms (simplificado)
+        ];
+
+        colunas.forEach((col, i) => {
+            desenharBorda(doc, x, y, col.w, hLinha);
+            doc.font("Helvetica").fontSize(5.5).text(valores[i] || "", x + 2, y + 5, { 
+                width: col.w - 4, 
+                align: (i >= 5) ? "right" : "left", 
+                lineBreak: false 
+            });
+            x += col.w;
+        });
+
+        y += hLinha;
+    });
+
+    return y + 10;
 }
 
 function desenharInformacoesAdicionais(doc, dados, margem, largura, y) {
-    const altura = 72;
+    const spaceLeft = 800 - y;
+    const h = Math.max(spaceLeft, 50); // Preenche o resto da página
 
-    desenharBorda(doc, margem, y, largura, altura);
-    desenharTituloCaixa(doc, "DADOS ADICIONAIS", margem, y, largura);
-
-    const texto = [
-        dados.informacoesAdicionais,
-        dados.protocolo
-            ? `Protocolo de autorização: ${dados.protocolo}`
-            : ""
-    ]
-        .filter(Boolean)
-        .join("\n");
-
-    doc
-        .font("Helvetica")
-        .fontSize(7)
-        .text(
-            textoSeguro(texto, "Nenhuma informação adicional informada."),
-            margem + 7,
-            y + 18,
-            {
-                width: largura - 14,
-                height: altura - 24,
-                ellipsis: true
-            }
-        );
-
-    return y + altura;
+    doc.font("Helvetica-Bold").fontSize(7).text("DADOS ADICIONAIS", margem, y);
+    y += 8;
+    
+    desenharCampo(doc, "INFORMAÇÕES COMPLEMENTARES", dados.informacoesAdicionais || "Nenhuma informação adicional informada.", margem, y, largura - 150, h);
+    desenharCampo(doc, "RESERVADO AO FISCO", "", margem + largura - 150, y, 150, h);
 }
 
 async function gerarDanfePdf(xml, tipo) {
     const dados = extrairDadosNfe(xml, tipo);
 
     if (!dados.chave || dados.chave.length !== 44) {
-        throw new Error(
-            "Não foi possível identificar a chave de acesso de 44 dígitos."
-        );
+        throw new Error("Não foi possível identificar a chave de acesso de 44 dígitos.");
+    }
+
+    // Resolve as dependências assíncronas ANTES de abrir o fluxo do PDF
+    let codigoBarras = null;
+    try {
+        codigoBarras = await criarCodigoBarras(dados.chave);
+    } catch (e) {
+        console.warn("Falha ao gerar código de barras:", e.message);
     }
 
     const doc = new PDFDocument({
         size: "A4",
-        margin: 0,
+        margin: 20,
         autoFirstPage: true,
         bufferPages: true
     });
 
     const paginas = [];
-
     doc.on("data", (chunk) => paginas.push(chunk));
 
-    const margem = 24;
-    const larguraPagina = 595;
-    const alturaPagina = 842;
-    const largura = larguraPagina - margem * 2;
+    const margem = 20;
+    const largura = 555; // 595 - (20 * 2)
 
-    desenharCabecalhoDanfe(doc, dados, margem, largura);
+    // Helper para desenhar o topo padronizado independente da página
+    const desenharTopo = (docInstance, currentY = 20) => {
+        return desenharCabecalhoPrincipal(docInstance, dados, margem, largura, currentY, codigoBarras);
+    };
 
-    let y = 120;
+    let y = margem;
 
-    y = desenharEmitente(doc, dados, margem, largura, y) + 8;
-    y = desenharDestinatario(doc, dados, margem, largura, y) + 8;
-    y = desenharProdutos(doc, dados, margem, largura, y) + 8;
-    y = desenharTotais(doc, dados, margem, largura, y) + 8;
-    y = desenharTransporte(doc, dados, margem, largura, y) + 8;
-    y = desenharInformacoesAdicionais(
-        doc,
-        dados,
-        margem,
-        largura,
-        y
-    ) + 12;
+    // Página 1: Desenha o Canhoto
+    y = desenharCanhoto(doc, margem, largura, y);
+    desenharLinhaTracejada(doc, margem, largura, y);
+    y += 10;
 
-    if (dados.chave) {
-        try {
-            const codigoBarras = await criarCodigoBarras(dados.chave);
+    // Cabeçalho e Quadros principais
+    y = desenharTopo(doc, y);
+    y = desenharDestinatario(doc, dados, margem, largura, y);
+    y = desenharTotais(doc, dados, margem, largura, y);
+    y = desenharTransporte(doc, dados, margem, largura, y);
 
-            doc
-                .font("Helvetica-Bold")
-                .fontSize(6.5)
-                .text(
-                    "CHAVE DE ACESSO",
-                    margem,
-                    y,
-                    {
-                        width: 180
-                    }
-                );
+    // Produtos (com quebra de página automática embutida)
+    y = desenharProdutosPaginados(doc, dados, margem, largura, y, desenharTopo);
 
-            doc
-                .font("Helvetica")
-                .fontSize(7)
-                .text(
-                    formatarChave(dados.chave),
-                    margem,
-                    y + 10,
-                    {
-                        width: 180
-                    }
-                );
-
-            doc.image(codigoBarras, margem + 205, y - 2, {
-                width: 330,
-                height: 35
-            });
-        } catch (error) {
-            console.error(
-                "Não foi possível gerar o código de barras:",
-                error.message
-            );
-        }
+    // Informações Adicionais (Se faltar espaço, joga pra próxima página)
+    if (y > 700) {
+        doc.addPage();
+        y = desenharTopo(doc, 20);
     }
-
-    doc
-        .moveTo(margem, alturaPagina - 45)
-        .lineTo(larguraPagina - margem, alturaPagina - 45)
-        .lineWidth(0.6)
-        .stroke();
-
-    doc
-        .font("Helvetica")
-        .fontSize(6.5)
-        .text(
-            "DANFE gerado automaticamente a partir do XML autorizado.",
-            margem,
-            alturaPagina - 35,
-            {
-                width: largura,
-                align: "center"
-            }
-        );
+    desenharInformacoesAdicionais(doc, dados, margem, largura, y);
 
     doc.end();
 
@@ -1442,7 +1077,6 @@ async function gerarDanfePdf(xml, tipo) {
                 serie: dados.serie
             });
         });
-
         doc.on("error", reject);
     });
 }
@@ -1481,10 +1115,7 @@ app.post("/api/xml/render-pdf", async (req, res) => {
             });
         }
 
-        const resultado = await gerarDanfePdf(
-            xmlString,
-            tipo || "NFe"
-        );
+        const resultado = await gerarDanfePdf(xmlString, tipo || "NFe");
 
         return res.status(200).json({
             success: true,
@@ -1496,7 +1127,6 @@ app.post("/api/xml/render-pdf", async (req, res) => {
         });
     } catch (error) {
         console.error("Erro ao gerar DANFE:", error);
-
         return res.status(500).json({
             success: false,
             error: error.message || "Erro interno ao gerar o DANFE."
@@ -1506,6 +1136,7 @@ app.post("/api/xml/render-pdf", async (req, res) => {
 
 /* ============================================================
    MANIFESTAÇÃO DO DESTINATÁRIO
+   (Mantenha o restante do seu código exatamente como estava)
 ============================================================ */
 
 function obterAmbienteNFe() {
