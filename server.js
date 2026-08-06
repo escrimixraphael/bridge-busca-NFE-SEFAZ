@@ -10,7 +10,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-
+import { NFE_GerarDanfe } from '@nfewizard/danfe';
 import forge from 'node-forge';
 import { SignedXml } from 'xml-crypto';
 
@@ -203,7 +203,7 @@ app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, r
 // ============================================================
 // NOVO ENDPOINT: GERAÇÃO DE PDF ON DEMAND
 // ============================================================
-app.post("/api/xml/render-pdf", (req, res) => {
+app.post("/api/xml/render-pdf", async (req, res) => {
     try {
         const { xmlBase64, tipo } = req.body;
         
@@ -213,31 +213,31 @@ app.post("/api/xml/render-pdf", (req, res) => {
 
         const xmlString = Buffer.from(xmlBase64, 'base64').toString('utf8');
 
-        // AQUI VOCÊ INSERE A SUA BIBLIOTECA. Exemplo com 'danfe':
+        // Exemplo de integração com biblioteca moderna (ex: @nfewizard/danfe)
+        // Lembre-se de importar no topo do seu server.js: import { NFE_GerarDanfe } from '@nfewizard/danfe';
         /*
-        const danfeGerado = new Danfe(xmlString);
-        danfeGerado.gerarPDF((err, pdfBuffer) => {
-            if (err) return res.status(500).json({ success: false, error: "Erro gerando PDF" });
-            
-            return res.json({ 
-                success: true, 
-                pdfBase64: pdfBuffer.toString('base64') 
-            });
+        const pdfBuffer = await NFE_GerarDanfe({
+            data: xmlString,
+            outputPath: null // Mantém o arquivo em buffer de memória
+        });
+
+        return res.json({ 
+            success: true, 
+            pdfBase64: Buffer.from(pdfBuffer).toString('base64') 
         });
         */
 
-        // Placeholder para não quebrar a aplicação caso a biblioteca ainda não esteja instalada
-        res.json({
+        // Resposta temporária enquanto acopla a biblioteca escolhida
+        return res.json({
             success: true,
-            message: "Módulo de PDF alcançado com sucesso! Integre a biblioteca para retornar o Base64",
-            // pdfBase64: "JVBERi0xLjMK..."
+            message: "Endpoint de PDF configurado com sucesso!",
+            // pdfBase64: "..."
         });
 
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        return res.status(500).json({ success: false, error: error.message });
     }
 });
-
 
 // ============================================================
 // 2. MÓDULO: MANIFESTAÇÃO DO DESTINATÁRIO NF-e
