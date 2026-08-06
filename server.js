@@ -12,6 +12,7 @@ import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import forge from 'node-forge';
 import { SignedXml } from 'xml-crypto';
+import PDFDocument from 'pdfkit';
 
 // IMPORTAR BIBLIOTECA DE PDF AQUI (Descomente após instalar com npm install danfe)
 // import Danfe from 'danfe'; 
@@ -200,7 +201,7 @@ app.post("/api/sefaz/consultar", validarAPI, (req, res) => consultarSefaz(req, r
 app.post("/backend/v1/xml/sync", validarAPI, (req, res) => consultarSefaz(req, res));
 
 // ============================================================
-// NOVO ENDPOINT: GERAÇÃO DE PDF ON DEMAND
+// NOVO ENDPOINT: GERAÇÃO DE PDF (DANFE) ON DEMAND COM PDFKIT
 // ============================================================
 app.post("/api/xml/render-pdf", async (req, res) => {
     try {
@@ -212,28 +213,53 @@ app.post("/api/xml/render-pdf", async (req, res) => {
 
         const xmlString = Buffer.from(xmlBase64, 'base64').toString('utf8');
 
-        // Exemplo de integração com biblioteca moderna (ex: @nfewizard/danfe)
-        // Lembre-se de importar no topo do seu server.js: import { NFE_GerarDanfe } from '@nfewizard/danfe';
-        /*
-        const pdfBuffer = await NFE_GerarDanfe({
-            data: xmlString,
-            outputPath: null // Mantém o arquivo em buffer de memória
+        // Extração rápida de dados essenciais via Regex do XML
+        const extractTag = (xml, tag) => {
+            const match = xml.match(new RegExp(`<${tag}[^>]*>(.*?)<\/${tag}>`));
+            return match ? match[1] : '';
+        };
+
+        const chave = extractTag(xmlString, 'chNFe') || extractTag(xmlString, 'Id')?.replace('NFe', '') || 'N/D';
+        const cnpjEmit = extractTag(xmlString, 'CNPJ');
+        const xNomeEmit = extractTag(xmlString, 'xNome');
+        const vNF = extractTag(xmlString, 'vNF');
+        const dhEmi = extractTag(xmlString, 'dhEmi') || extractTag(xmlString, 'dEmi');
+        const nNF = extractTag(xmlString, 'nNF');
+
+        // Criação do PDF em memória usando PDFKit
+        const doc = new PDFDocument({ size: 'A4', margin: 40 });
+        const buffers = [];
+
+        doc.on('data', chunk => buffers.push(chunk));
+        
+        doc.on('end', () => {
+            const pdfBuffer = Buffer.concat(buffers);
+            return res.json({
+                success: true,
+                pdfBase64: pdfBuffer.toString('base64')
+            });
         });
 
-        return res.json({ 
-            success: true, 
-            pdfBase64: Buffer.from(pdfBuffer).toString('base64') 
-        });
-        */
+        // Desenho do layout do DANFE Simplificado
+        doc.fontSize(14).font('Helvetica-Bold').text('DANFE Simplificado (Visualização)', { align: 'center' });
+        doc.moveDown(1);
 
-        // Resposta temporária enquanto acopla a biblioteca escolhida
-        return res.json({
-            success: true,
-            message: "Endpoint de PDF configurado com sucesso!",
-            // pdfBase64: "..."
-        });
+        doc.fontSize(10).font('Helvetica-Bold').text('DADOS DA NOTA FISCAL');
+        doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
+        doc.moveDown(0.5);
+
+        doc.font('Helvetica').text(`Chave de Acesso: ${chave}`);
+        doc.text(`Número da NF: ${nNF || 'N/D'}   |   Data Emissão: ${dhEmi || 'N/D'}`);
+        doc.text(`Emitente: ${xNomeEmit || 'Não identificado'} (CNPJ: ${cnpjEmit})`);
+        doc.text(`Valor Total da Nota: R$ ${vNF || '0,00'}`);
+        
+        doc.moveDown(2);
+        doc.fontSize(8).fillColor('gray').text('Documento gerado automaticamente pelo Bridge SEFAZ / ERP.', { align: 'center' });
+
+        doc.end();
 
     } catch (error) {
+        console.error("Erro ao gerar PDF:", error);
         return res.status(500).json({ success: false, error: error.message });
     }
 });
