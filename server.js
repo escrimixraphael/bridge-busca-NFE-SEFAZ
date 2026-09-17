@@ -31,7 +31,7 @@ const NFE_EVENTO_WSDL_NAMESPACE =
 const NFE_EVENTO_SOAP_ACTION =
     "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento";
 
-const VERSAO = "2.0.0";
+const VERSAO = "2.1.0";
 
 process.on("uncaughtException", (error) => {
     console.error("ERRO NÃO TRATADO:", error);
@@ -69,6 +69,7 @@ const limiter = rateLimit({
 app.use("/api", limiter);
 app.use("/backend", limiter);
 app.use("/rpa", limiter);
+app.use("/consultar-sefaz-direto", limiter);
 
 /* ============================================================
    FUNÇÕES GERAIS
@@ -382,6 +383,30 @@ app.get("/api/test-auth", validarAPI, (req, res) => {
     });
 });
 
+app.get("/", (req, res) => {
+    res.json({
+        success: true,
+        service: "Bridge SEFAZ",
+        version: VERSAO,
+        docs: {
+            health: "GET /health",
+            info: "GET /api/info",
+            testAuth: "GET /api/test-auth (header x-api-key)",
+            proxyGenerico: "POST /consultar-sefaz-direto",
+            nfse: [
+                "POST /api/nfse/distribuicao",
+                "POST /api/nfse/consultar",
+                "POST /api/nfse/emitir",
+                "POST /api/nfse/eventos",
+                "POST /api/nfse/eventos-adn",
+                "POST /api/nfse/dps",
+                "POST /api/nfse/danfse",
+                "POST /api/nfse/parametros"
+            ]
+        }
+    });
+});
+
 /* ============================================================
    COMUNICAÇÃO HTTPS COM A SEFAZ
 ============================================================ */
@@ -577,6 +602,14 @@ async function proxyFiscalDireto(req, res) {
     const requestId = crypto.randomUUID();
 
     try {
+        if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+            return res.status(400).json({
+                success: false,
+                requestId,
+                error: "Corpo JSON inválido ou ausente."
+            });
+        }
+
         const {
             pfxBase64,
             password,
@@ -588,13 +621,29 @@ async function proxyFiscalDireto(req, res) {
             headers,
             body,
             reqBody
-        } = req.body || {};
+        } = req.body;
 
-        if (!pfxBase64 || !password || !endpoint) {
+        if (typeof endpoint !== "string" || !/^https:\/\/.+/i.test(endpoint.trim())) {
+            return res.status(400).json({
+                success: false,
+                requestId,
+                error: "endpoint HTTPS válido é obrigatório."
+            });
+        }
+
+        if (!pfxBase64 || !password) {
             return res.status(400).json({
                 success: false,
                 requestId,
                 error: "pfxBase64, password e endpoint são obrigatórios."
+            });
+        }
+
+        if (headers !== undefined && (typeof headers !== "object" || headers === null || Array.isArray(headers))) {
+            return res.status(400).json({
+                success: false,
+                requestId,
+                error: "headers deve ser um objeto."
             });
         }
 
@@ -737,6 +786,242 @@ app.post(
     validarAPI,
     proxyFiscalDireto
 );
+
+/* ============================================================
+   ROTAS DEDICADAS NFS-e NACIONAL (ADN + SEFIN)
+   Manuais oficiais RFB: ADN Contribuintes v1.0 (12/02/2026) e
+   Sefin Emissor Público Nacional v1.0 (17/03/2025).
+   Todas exigem pfxBase64 + password no corpo (mTLS com A1) e
+   reaproveitam o proxyFiscalDireto. O "ambiente" aceita
+   "producao"/"1" (produção) ou qualquer outro valor
+   (produção restrita / homologação).
+============================================================ */
+
+const NFSE_BASES = {
+    producao: {
+        adn: "https://adn.nfse.gov.br/contribuintes",
+        danfse: "https://adn.nfse.gov.br/danfse",
+        sefin: "https://sefin.nfse.gov.br/SefinNacional"
+    },
+    homologacao: {
+        adn: "https://adn.producaorestrita.nfse.gov.br/contribuintes",
+        danfse: "https://adn.producaorestrita.nfse.gov.br/danfse",
+        sefin: "https://sefin.producaorestrita.nfse.gov.br/SefinNacional"
+    }
+};
+
+function basesNfse(ambiente) {
+    const amb = String(ambiente || "").toLowerCase();
+    return amb === "producao" || amb === "1" || amb === "prod"
+        ? NFSE_BASES.producao
+        : NFSE_BASES.homologacao;
+}
+
+function somenteDigitosLocal(valor, max = 0) {
+    const digitos = String(valor || "").replace(/\D/g, "");
+    return max > 0 ? digitos.slice(0, max) : digitos;
+}
+
+function resposta400(res, error) {
+    return res.status(400).json({ success: false, error });
+}
+
+// GET {adn}/DFe/{nsu}?lote=true[&cnpj=...] — Manual ADN §1.1.1 (traz emitidas e recebidas)
+function mapearNfseDistribuicao(req, res, next) {
+    const corpo = req.body || {};
+    const nsu = somenteDigitosLocal(corpo.nsu, 20) || "0";
+    const cnpj = somenteDigitosLocal(corpo.cnpj);
+    const bases = basesNfse(corpo.ambiente);
+
+    let endpoint = `${bases.adn}/DFe/${nsu}?lote=true`;
+    if (cnpj.length === 14) {
+        endpoint += `&cnpj=${cnpj}`;
+    }
+
+    req.body = {
+        ...corpo,
+        endpoint,
+        method: "GET",
+        isRest: true,
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: undefined,
+        reqBody: undefined
+    };
+    next();
+}
+
+// GET {sefin}/nfse/{chaveAcesso} — Manual Sefin §1.3.2(b)
+function mapearNfseConsultar(req, res, next) {
+    const corpo = req.body || {};
+    const chave = somenteDigitosLocal(corpo.chaveAcesso, 50);
+    if (chave.length !== 50) {
+        return resposta400(res, "chaveAcesso com 50 dígitos é obrigatória.");
+    }
+    const bases = basesNfse(corpo.ambiente);
+
+    req.body = {
+        ...corpo,
+        endpoint: `${bases.sefin}/nfse/${chave}`,
+        method: "GET",
+        isRest: true,
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: undefined,
+        reqBody: undefined
+    };
+    next();
+}
+
+// POST {sefin}/nfse { dpsXmlGZipB64 } — Manual Sefin §1.3.2(a), emissão via DPS
+function mapearNfseEmitir(req, res, next) {
+    const corpo = req.body || {};
+    if (!corpo.dpsXmlGZipB64 || typeof corpo.dpsXmlGZipB64 !== "string") {
+        return resposta400(res, "dpsXmlGZipB64 é obrigatório para emissão.");
+    }
+    const bases = basesNfse(corpo.ambiente);
+
+    req.body = {
+        ...corpo,
+        endpoint: `${bases.sefin}/nfse`,
+        method: "POST",
+        isRest: true,
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ dpsXmlGZipB64: sanitizarBase64(corpo.dpsXmlGZipB64) })
+    };
+    next();
+}
+
+// GET {sefin}/nfse/{chave}/eventos[/{tipo}[/{seq}]] — Manual Sefin §1.5.2(b/c/d)
+function mapearNfseEventos(req, res, next) {
+    const corpo = req.body || {};
+    const chave = somenteDigitosLocal(corpo.chaveAcesso, 50);
+    if (chave.length !== 50) {
+        return resposta400(res, "chaveAcesso com 50 dígitos é obrigatória.");
+    }
+    const bases = basesNfse(corpo.ambiente);
+
+    let endpoint = `${bases.sefin}/nfse/${chave}/eventos`;
+    const tipo = somenteDigitosLocal(corpo.tipoEvento);
+    const seq = somenteDigitosLocal(corpo.numSeqEvento);
+    if (tipo) {
+        endpoint += `/${tipo}`;
+        if (seq) {
+            endpoint += `/${seq}`;
+        }
+    }
+
+    req.body = {
+        ...corpo,
+        endpoint,
+        method: "GET",
+        isRest: true,
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: undefined,
+        reqBody: undefined
+    };
+    next();
+}
+
+// GET {adn}/NFSe/{chave}/Eventos — Manual ADN §1.1.1(b)
+function mapearNfseEventosAdn(req, res, next) {
+    const corpo = req.body || {};
+    const chave = somenteDigitosLocal(corpo.chaveAcesso, 50);
+    if (chave.length !== 50) {
+        return resposta400(res, "chaveAcesso com 50 dígitos é obrigatória.");
+    }
+    const bases = basesNfse(corpo.ambiente);
+
+    req.body = {
+        ...corpo,
+        endpoint: `${bases.adn}/NFSe/${chave}/Eventos`,
+        method: "GET",
+        isRest: true,
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: undefined,
+        reqBody: undefined
+    };
+    next();
+}
+
+// GET {sefin}/dps/{id} — Manual Sefin §1.4.2(a), recupera a chave da NFS-e pela DPS
+function mapearNfseDps(req, res, next) {
+    const corpo = req.body || {};
+    const dpsId = String(corpo.dpsId || "").trim();
+    if (!dpsId) {
+        return resposta400(res, "dpsId é obrigatório.");
+    }
+    const bases = basesNfse(corpo.ambiente);
+
+    req.body = {
+        ...corpo,
+        endpoint: `${bases.sefin}/dps/${dpsId}`,
+        method: "GET",
+        isRest: true,
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: undefined,
+        reqBody: undefined
+    };
+    next();
+}
+
+// GET {danfse}/{chaveAcesso} — DANFSe em PDF (detectado e devolvido em pdfBase64)
+function mapearNfseDanfse(req, res, next) {
+    const corpo = req.body || {};
+    const chave = somenteDigitosLocal(corpo.chaveAcesso, 50);
+    if (chave.length !== 50) {
+        return resposta400(res, "chaveAcesso com 50 dígitos é obrigatória.");
+    }
+    const bases = basesNfse(corpo.ambiente);
+
+    req.body = {
+        ...corpo,
+        endpoint: `${bases.danfse}/${chave}`,
+        method: "GET",
+        isRest: true,
+        headers: { Accept: "application/pdf" },
+        body: undefined,
+        reqBody: undefined
+    };
+    next();
+}
+
+// GET {sefin}/parametros_municipais/... — Manual Sefin §1.2.1(a/b/c/d)
+function mapearNfseParametros(req, res, next) {
+    const corpo = req.body || {};
+    const codMun = somenteDigitosLocal(corpo.codigoMunicipio, 7);
+    if (!codMun) {
+        return resposta400(res, "codigoMunicipio (IBGE) é obrigatório.");
+    }
+    const bases = basesNfse(corpo.ambiente);
+
+    let endpoint = `${bases.sefin}/parametros_municipais/${codMun}`;
+    if (corpo.codigoServico && String(corpo.codigoServico).trim()) {
+        endpoint += `/${String(corpo.codigoServico).trim()}`;
+    } else if (corpo.documento && somenteDigitosLocal(corpo.documento)) {
+        endpoint += `/${somenteDigitosLocal(corpo.documento)}`;
+    } else {
+        endpoint += "/convenio";
+    }
+
+    req.body = {
+        ...corpo,
+        endpoint,
+        method: "GET",
+        isRest: true,
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: undefined,
+        reqBody: undefined
+    };
+    next();
+}
+
+app.post("/api/nfse/distribuicao", validarAPI, mapearNfseDistribuicao, proxyFiscalDireto);
+app.post("/api/nfse/consultar", validarAPI, mapearNfseConsultar, proxyFiscalDireto);
+app.post("/api/nfse/emitir", validarAPI, mapearNfseEmitir, proxyFiscalDireto);
+app.post("/api/nfse/eventos", validarAPI, mapearNfseEventos, proxyFiscalDireto);
+app.post("/api/nfse/eventos-adn", validarAPI, mapearNfseEventosAdn, proxyFiscalDireto);
+app.post("/api/nfse/dps", validarAPI, mapearNfseDps, proxyFiscalDireto);
+app.post("/api/nfse/danfse", validarAPI, mapearNfseDanfse, proxyFiscalDireto);
+app.post("/api/nfse/parametros", validarAPI, mapearNfseParametros, proxyFiscalDireto);
 
 /* ============================================================
    EXTRAÇÃO DOS DADOS DA NF-E
