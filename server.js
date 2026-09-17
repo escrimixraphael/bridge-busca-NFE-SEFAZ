@@ -451,6 +451,84 @@ function executarRequisicaoHttps({
     });
 }
 
+function executarRequisicaoRest({
+    endpoint,
+    certificado,
+    password,
+    method = "GET",
+    headers = {},
+    body = null,
+    timeout = 60000
+}) {
+    return new Promise((resolve, reject) => {
+        const endpointUrl = new URL(endpoint);
+
+        if (endpointUrl.protocol !== "https:") {
+            reject(new Error("O endpoint precisa utilizar HTTPS."));
+            return;
+        }
+
+        const bodyBuffer =
+            body === null || body === undefined
+                ? null
+                : Buffer.from(
+                    typeof body === "string" ? body : JSON.stringify(body),
+                    "utf8"
+                );
+
+        const opcoes = {
+            hostname: endpointUrl.hostname,
+            port: endpointUrl.port || 443,
+            path: endpointUrl.pathname + endpointUrl.search,
+            method: String(method || "GET").toUpperCase(),
+            pfx: certificado,
+            passphrase: password,
+            minVersion: "TLSv1.2",
+            rejectUnauthorized:
+                String(process.env.SEFAZ_REJECT_UNAUTHORIZED || "false") === "true",
+            headers: {
+                "User-Agent": "Bridge-SEFAZ/2.0",
+                Accept: "application/json, application/pdf, text/xml, */*",
+                ...headers
+            }
+        };
+
+        if (bodyBuffer) {
+            opcoes.headers["Content-Length"] = bodyBuffer.length;
+        }
+
+        const requisicao = https.request(opcoes, (resposta) => {
+            const chunks = [];
+
+            resposta.on("data", (chunk) => {
+                chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+            });
+
+            resposta.on("end", () => {
+                resolve({
+                    statusCode: resposta.statusCode,
+                    headers: resposta.headers,
+                    bodyBuffer: Buffer.concat(chunks)
+                });
+            });
+        });
+
+        requisicao.setTimeout(timeout, () => {
+            requisicao.destroy(
+                new Error("Timeout na comunicação com o serviço fiscal.")
+            );
+        });
+
+        requisicao.on("error", reject);
+
+        if (bodyBuffer) {
+            requisicao.write(bodyBuffer);
+        }
+
+        requisicao.end();
+    });
+}
+
 /* ============================================================
    DISTRIBUIÇÃO DF-E
 ============================================================ */
@@ -495,7 +573,7 @@ function processarRespostaSefaz(soapXml) {
     return retorno;
 }
 
-async function consultarSefaz(req, res) {
+async function proxyFiscalDireto(req, res) {
     const requestId = crypto.randomUUID();
 
     try {
@@ -504,15 +582,19 @@ async function consultarSefaz(req, res) {
             password,
             endpoint,
             soapEnvelope,
-            soapAction
+            soapAction,
+            isRest,
+            method,
+            headers,
+            body,
+            reqBody
         } = req.body || {};
 
-        if (!pfxBase64 || !password || !endpoint || !soapEnvelope) {
+        if (!pfxBase64 || !password || !endpoint) {
             return res.status(400).json({
                 success: false,
                 requestId,
-                error:
-                    "pfxBase64, password, endpoint e soapEnvelope são obrigatórios."
+                error: "pfxBase64, password e endpoint são obrigatórios."
             });
         }
 
@@ -531,6 +613,64 @@ async function consultarSefaz(req, res) {
                 success: false,
                 requestId,
                 error: `Erro no certificado PFX: ${error.message}`
+            });
+        }
+
+        const restBody = body !== undefined ? body : reqBody;
+
+        if (isRest === true || (!soapEnvelope && restBody !== undefined)) {
+            const resposta = await executarRequisicaoRest({
+                endpoint,
+                certificado,
+                password,
+                method: method || "GET",
+                headers: headers || {},
+                body: restBody !== undefined ? restBody : null
+            });
+
+            const statusCode = resposta.statusCode;
+            const contentType = String(
+                resposta.headers["content-type"] || ""
+            );
+            const texto = resposta.bodyBuffer.toString("utf8");
+            const parecePdf =
+                contentType.includes("pdf") ||
+                resposta.bodyBuffer.slice(0, 4).toString("ascii") === "%PDF";
+
+            let data = null;
+            let jsonResponse = null;
+            let pdfBase64 = null;
+
+            if (parecePdf) {
+                pdfBase64 = resposta.bodyBuffer.toString("base64");
+            } else if (resposta.bodyBuffer.length) {
+                data = texto;
+
+                try {
+                    jsonResponse = JSON.parse(texto);
+                    data = jsonResponse;
+                } catch (_) {
+                    jsonResponse = null;
+                }
+            }
+
+            return res.status(200).json({
+                success: statusCode >= 200 && statusCode < 300,
+                requestId,
+                status: statusCode,
+                statusCode,
+                contentType,
+                data,
+                jsonResponse,
+                pdfBase64
+            });
+        }
+
+        if (!soapEnvelope) {
+            return res.status(400).json({
+                success: false,
+                requestId,
+                error: "Informe soapEnvelope (SOAP) ou isRest + endpoint (REST)."
             });
         }
 
@@ -553,40 +693,49 @@ async function consultarSefaz(req, res) {
             success: sucesso,
             requestId,
             statusCode: resposta.statusCode,
+            status: resposta.statusCode,
             cStat: processado.cStat,
             xMotivo: processado.xMotivo,
             ultNSU: processado.ultNSU,
             maxNSU: processado.maxNSU,
             docs: processado.docs,
-            soapResponse: resposta.body
+            xmlResponse: resposta.body,
+            soapResponse: resposta.body,
+            data: resposta.body
         });
     } catch (error) {
-        console.error("Erro na consulta SEFAZ:", error);
+        console.error("Erro no proxy fiscal direto:", error);
 
         return res.status(502).json({
             success: false,
             requestId,
-            error: error.message || "Erro de comunicação com a SEFAZ."
+            error: error.message || "Erro de comunicação com o serviço fiscal."
         });
     }
 }
 
 app.post(
+    "/consultar-sefaz-direto",
+    validarAPI,
+    proxyFiscalDireto
+);
+
+app.post(
     "/api/sefaz/distribuicao",
     validarAPI,
-    consultarSefaz
+    proxyFiscalDireto
 );
 
 app.post(
     "/api/sefaz/consultar",
     validarAPI,
-    consultarSefaz
+    proxyFiscalDireto
 );
 
 app.post(
     "/backend/v1/xml/sync",
     validarAPI,
-    consultarSefaz
+    proxyFiscalDireto
 );
 
 /* ============================================================
